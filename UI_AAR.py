@@ -1,14 +1,14 @@
-"""Aura Art Scanner chat app with multimodal support in Streamlit.
+"""Aplicación de chat Aura Art Scanner con soporte multimodal en Streamlit.
 
-This module renders a conversational interface where the user can:
-- ask questions about artworks,
-- attach one or more images,
-- edit previous user prompts,
-- regenerate the assistant response after an edit,
-- and interact with Gemini through the OpenAI-compatible API.
+Este módulo renderiza una interfaz conversacional en la que la persona usuaria puede:
+- hacer preguntas sobre obras de arte,
+- adjuntar una o varias imágenes,
+- editar mensajes anteriores,
+- regenerar la respuesta del asistente después de una edición,
+- e interactuar con Gemini mediante la API compatible con OpenAI.
 
-The file also customizes the Streamlit interface with a background image
-and translucent chat panels for readability.
+El archivo también personaliza la interfaz de Streamlit con una imagen de fondo
+y paneles translúcidos para mejorar la legibilidad.
 """
 
 import base64
@@ -22,7 +22,7 @@ import streamlit as st
 from prompts import stronger_prompt
 
 # --------------------------------------------
-# Environment and API clients
+# Entorno y clientes de API
 # --------------------------------------------
 load_dotenv(override=True)
 
@@ -30,16 +30,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 
-# OpenAI client kept available in case the app is switched back to OpenAI models.
+# Se mantiene el cliente de OpenAI por si la app vuelve a usar modelos de OpenAI.
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
 model_openai = "gpt-5.4-mini"
 
-# Gemini is used through the OpenAI-compatible endpoint.
+# Gemini se usa a través del endpoint compatible con OpenAI.
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 client_google = OpenAI(api_key=GOOGLE_API_KEY, base_url=GEMINI_BASE_URL)
 model_google = "gemini-2.5-flash"
 
-# Local image used as the app background.
+# Imagen local usada como fondo de la aplicación.
 BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/Reflets du soir sur ma dernière toile _Échappée Belle_©.jpeg"
 
 AUDIENCE_PROFILES = [
@@ -104,11 +104,11 @@ AUDIENCE_PROFILES = [
 
 @st.cache_data(show_spinner=False)
 def get_background_image_data_url(image_path):
-    """Return a base64 data URL for a local image so CSS can use it as background.
+    """Devuelve una data URL en base64 para que CSS use una imagen local como fondo.
 
-    The result is cached because the same file is read on every Streamlit rerun.
-    If the file does not exist, the function returns ``None`` and the app falls
-    back to a generated sky-like background.
+    El resultado se cachea porque el mismo archivo se lee en cada rerun de
+    Streamlit. Si el archivo no existe, la función devuelve ``None`` y la app
+    usa un fondo alternativo generado por CSS.
     """
     if not os.path.exists(image_path):
         return None
@@ -120,21 +120,21 @@ def get_background_image_data_url(image_path):
 
 
 # --------------------------------------------
-# Page configuration and theme
+# Configuración de página y tema visual
 # --------------------------------------------
 st.set_page_config(page_title="Aura Art Scanner", page_icon="🎨")
 
 background_image_url = get_background_image_data_url(BACKGROUND_IMAGE_PATH)
 
 if background_image_url:
-    # Overlay the artwork with a soft warm veil so text panels stand out better.
+    # Superpone un velo cálido suave para que los paneles de texto destaquen mejor.
     background_layers = (
         "linear-gradient(180deg, rgba(250, 245, 235, 0.36) 0%, "
         "rgba(231, 210, 163, 0.28) 100%), "
         f'url("{background_image_url}")'
     )
 else:
-    # Fallback background used when the local image is unavailable.
+    # Fondo alternativo cuando la imagen local no está disponible.
     background_layers = (
         "radial-gradient(circle at 16% 18%, rgba(255, 255, 255, 0.68) 0 7%, transparent 8%), "
         "radial-gradient(circle at 24% 16%, rgba(255, 255, 255, 0.68) 0 5%, transparent 6%), "
@@ -381,7 +381,7 @@ css_background = """
 </style>
 """.replace("BACKGROUND_LAYERS_VALUE", background_layers)
 
-# Inject CSS directly into the page to theme the app.
+# Inyecta CSS directamente en la página para personalizar la interfaz.
 st.markdown(css_background, unsafe_allow_html=True)
 
 st.markdown(
@@ -415,39 +415,39 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Image formats accepted in the chat composer.
+# Formatos de imagen aceptados en el compositor del chat.
 SUPPORTED_IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 
 
 # --------------------------------------------
-# Session state
+# Estado de sesión
 # --------------------------------------------
 if "messages" not in st.session_state:
-    # Messages are stored as dictionaries with "role", "content", and optional "images".
+    # Los mensajes se guardan como diccionarios con "role", "content" y "images" opcional.
     st.session_state.messages = [{"role": "assistant", "content": "Ask about art..."}]
 
 if "editing_message_index" not in st.session_state:
-    # Holds the index of the user message currently being edited.
+    # Guarda el índice del mensaje del usuario que se está editando.
     st.session_state.editing_message_index = None
 
 if "pending_regeneration" not in st.session_state:
-    # Signals that a response should be regenerated after an edited message is saved.
+    # Indica que debe regenerarse una respuesta después de guardar una edición.
     st.session_state.pending_regeneration = None
 
 
 def chat_input_supports_files():
-    """Check whether the installed Streamlit version supports chat file uploads."""
+    """Comprueba si la versión instalada de Streamlit soporta carga de archivos en el chat."""
     return "accept_file" in inspect.signature(st.chat_input).parameters
 
 
 def serialize_uploaded_images(uploaded_files):
-    """Convert uploaded Streamlit files into a serializable in-memory structure.
+    """Convierte archivos subidos en Streamlit a una estructura serializable en memoria.
 
-    Each image keeps:
-    - the original file name,
-    - mime type,
-    - raw bytes for rendering in Streamlit,
-    - and a base64 data URL for multimodal model input.
+    Cada imagen conserva:
+    - el nombre original del archivo,
+    - el tipo MIME,
+    - los bytes crudos para renderizarla en Streamlit,
+    - y una data URL en base64 para enviarla al modelo multimodal.
     """
     images = []
 
@@ -469,10 +469,10 @@ def serialize_uploaded_images(uploaded_files):
 
 
 def get_image_display_kwargs():
-    """Return image rendering arguments compatible with multiple Streamlit versions.
+    """Devuelve argumentos de renderizado compatibles con varias versiones de Streamlit.
 
-    Newer versions prefer ``width="stretch"`` while older versions still use
-    ``use_container_width=True``.
+    Las versiones nuevas prefieren ``width="stretch"``, mientras que las más
+    antiguas todavía usan ``use_container_width=True``.
     """
     width_parameter = inspect.signature(st.image).parameters.get("width")
 
@@ -483,7 +483,7 @@ def get_image_display_kwargs():
 
 
 def render_images(message):
-    """Render all images attached to a single chat message."""
+    """Renderiza todas las imágenes adjuntas a un mismo mensaje de chat."""
     for image in message.get("images", []):
         st.image(
             image["bytes"],
@@ -493,7 +493,7 @@ def render_images(message):
 
 
 def render_role_marker(role):
-    """Render a small role badge used both as UI label and CSS styling hook."""
+    """Renderiza una pequeña etiqueta de rol usada como marca visual y hook de CSS."""
     if role == "assistant":
         st.markdown(
             """
@@ -516,7 +516,7 @@ def render_role_marker(role):
 
 
 def render_sidebar_audience_menu():
-    """Render a curated sidebar menu of people who may be interested in art."""
+    """Renderiza un menú lateral curado con perfiles a quienes puede interesar el arte."""
     with st.sidebar:
         st.markdown("## Who Might Love Aura Art Scanner?")
         st.caption("A quick guide to the kinds of people this experience can speak to.")
@@ -567,11 +567,11 @@ def render_sidebar_audience_menu():
 
 
 def save_edited_message(index, edited_text):
-    """Persist an edited user message and trigger reply regeneration.
+    """Guarda un mensaje editado por la persona usuaria y activa la regeneración.
 
-    When a user edits an earlier prompt, the conversation after that point is
-    no longer reliable. For that reason, the history is trimmed up to the edited
-    message and the assistant response is regenerated from there.
+    Cuando se edita un prompt anterior, la conversación posterior deja de ser
+    totalmente coherente. Por eso, el historial se recorta hasta el mensaje
+    editado y la respuesta del asistente se genera de nuevo desde ese punto.
     """
     current_message = st.session_state.messages[index]
     normalized_text = edited_text.strip()
@@ -581,7 +581,7 @@ def save_edited_message(index, edited_text):
         return
 
     current_message["content"] = normalized_text
-    # Remove every message after the edited one so the next answer is consistent.
+    # Elimina los mensajes posteriores para que la nueva respuesta sea coherente.
     st.session_state.messages = st.session_state.messages[: index + 1]
     st.session_state.editing_message_index = None
     st.session_state.pending_regeneration = index
@@ -589,7 +589,7 @@ def save_edited_message(index, edited_text):
 
 
 def render_message(message, index, container=None):
-    """Render one chat message, including images and edit controls when needed."""
+    """Renderiza un mensaje de chat, incluyendo imágenes y controles de edición."""
     target = container if container is not None else st
     is_editing = (
         message["role"] == "user"
@@ -601,7 +601,7 @@ def render_message(message, index, container=None):
         render_role_marker(message["role"])
 
         if is_editing:
-            # While editing, the message body is replaced by a small form.
+            # Durante la edición, el cuerpo del mensaje se sustituye por un formulario.
             st.caption(
                 "Edit the message and regenerate the conversation from this point."
             )
@@ -631,18 +631,18 @@ def render_message(message, index, container=None):
         render_images(message)
 
         if message["role"] == "user":
-            # Only user messages can be edited.
+            # Solo los mensajes del usuario pueden editarse.
             if st.button("Edit message", key=f"edit_message_{index}"):
                 st.session_state.editing_message_index = index
                 st.rerun()
 
 
 def build_model_message(message):
-    """Convert an internal chat message into the format expected by the model API.
+    """Convierte un mensaje interno al formato esperado por la API del modelo.
 
-    Plain text messages are passed through as-is.
-    User messages with attached images are converted into multimodal content:
-    one text block plus one ``image_url`` block per image.
+    Los mensajes de solo texto se envían tal cual.
+    Los mensajes del usuario con imágenes adjuntas se transforman en contenido
+    multimodal: un bloque de texto y un bloque ``image_url`` por cada imagen.
     """
     if message["role"] != "user" or not message.get("images"):
         return {"role": message["role"], "content": message["content"]}
@@ -669,12 +669,12 @@ def build_model_message(message):
 
 
 def get_user_submission(disabled=False):
-    """Read the current user submission from the active chat composer.
+    """Lee el envío actual de la persona usuaria desde el compositor activo.
 
-    If the installed Streamlit supports file attachments in ``st.chat_input``,
-    the native chat input is used.
-    Otherwise, a fallback form is rendered so the user can still send text and
-    one or more images in older Streamlit versions.
+    Si la versión instalada de Streamlit soporta adjuntos en ``st.chat_input``,
+    se usa el chat nativo.
+    En caso contrario, se renderiza un formulario alternativo para poder enviar
+    texto y una o varias imágenes en versiones más antiguas.
     """
     if disabled:
         st.info("Finish editing the selected message to continue chatting.")
@@ -721,7 +721,7 @@ def get_user_submission(disabled=False):
 
 render_sidebar_audience_menu()
 
-# Dedicated container for the scrollable chat history.
+# Contenedor principal del historial de chat con scroll.
 messages_container = st.container(height=520, border=True)
 
 for index, msg in enumerate(st.session_state.messages):
@@ -729,7 +729,7 @@ for index, msg in enumerate(st.session_state.messages):
 
 
 def generate_assistant_reply(container):
-    """Send the current conversation to Gemini and stream the assistant reply."""
+    """Envía la conversación actual a Gemini y muestra la respuesta en streaming."""
     conversation = [{"role": "system", "content": stronger_prompt}]
     conversation.extend(build_model_message(message) for message in st.session_state.messages)
 
@@ -745,18 +745,18 @@ def generate_assistant_reply(container):
     st.session_state.messages.append({"role": "assistant", "content": response})
 
 
-# If a previous user message was edited, regenerate the reply once on rerun.
+# Si un mensaje anterior fue editado, regenera la respuesta una sola vez en el rerun.
 if st.session_state.pending_regeneration is not None:
     st.session_state.pending_regeneration = None
     generate_assistant_reply(messages_container)
 
-# Disable fresh input while the user is editing a past message.
+# Desactiva nuevos envíos mientras la persona usuaria edita un mensaje anterior.
 submission = get_user_submission(
     disabled=st.session_state.editing_message_index is not None
 )
 
 if submission:
-    # Store the new user turn in the same structure used for the message history.
+    # Guarda el nuevo turno del usuario en la misma estructura del historial.
     user_message = {
         "role": "user",
         "content": submission["text"],
@@ -764,13 +764,13 @@ if submission:
     }
 
     st.session_state.messages.append(user_message)
-    # Render the just-submitted message immediately before streaming the answer.
+    # Renderiza el mensaje recién enviado antes de iniciar el streaming de la respuesta.
     render_message(
         user_message,
         len(st.session_state.messages) - 1,
         container=messages_container,
     )
-    # Generate the assistant reply using the updated conversation history.
+    # Genera la respuesta del asistente usando el historial actualizado.
     generate_assistant_reply(messages_container)
 
 st.markdown(
