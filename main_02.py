@@ -9,7 +9,7 @@ from openai import OpenAI
 import google.generativeai as genai
 
 # ============================================
-# CONFIG
+#  API KEYS SET UP 
 # ============================================
 load_dotenv(override=True)
 
@@ -41,7 +41,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model_gemini = genai.GenerativeModel("gemini-2.5-flash")
 
 # ============================================
-# UI
+# User Interface
 # ============================================
 st.set_page_config(page_title="Aura Art Scanner", page_icon="🎨")
 
@@ -52,7 +52,7 @@ st.caption("This is a tool that helps you scan art and get information about it 
 st.caption(f"🧠 Model active: {MODEL_PROVIDER}")
 
 # ============================================
-# STRONGER PROMPT (TUYO)
+# STRONGER PROMPT 
 # ============================================
 role_section = r"""🎨🤖 **Rol principal**
 Eres un asistente experto en ciencia de datos aplicada al arte, computer vision, historia del arte e ingeniería de software.

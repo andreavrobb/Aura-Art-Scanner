@@ -65,7 +65,9 @@ dependencies = [
     { name = "google-genai" },
     { name = "google-generativeai" },
     { name = "openai" },
+    { name = "pandas" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "streamlit" },
 ]
 
@@ -75,7 +77,9 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.70.0" },
     { name = "google-generativeai", specifier = ">=0.8.6" },
     { name = "openai", specifier = ">=2.30.0" },
+    { name = "pandas", specifier = ">=3.0.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "requests", specifier = ">=2.33.1" },
     { name = "streamlit", specifier = ">=1.56.0" },
 ]
 
