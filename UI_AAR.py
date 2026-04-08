@@ -5,11 +5,14 @@ Este módulo renderiza una interfaz conversacional en la que la persona usuaria 
 - adjuntar una o varias imágenes,
 - editar mensajes anteriores,
 - regenerar la respuesta del asistente después de una edición,
-- e interactuar con Gemini mediante la API compatible con OpenAI.
+- e interactuar con Gemini o OpenAI mediante sus API's.
 
 El archivo también personaliza la interfaz de Streamlit con una imagen de fondo
 y paneles translúcidos para mejorar la legibilidad.
 """
+# --------------------------------------------
+# Librerias y dependencias  
+# --------------------------------------------
 
 import base64
 import inspect
@@ -40,8 +43,9 @@ client_google = OpenAI(api_key=GOOGLE_API_KEY, base_url=GEMINI_BASE_URL)
 model_google = "gemini-2.5-flash"
 
 # Imagen local usada como fondo de la aplicación.
-BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/Reflets du soir sur ma dernière toile _Échappée Belle_©.jpeg"
+BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/_ (1).jpeg"
 
+# Menú interactivo que se visualiza en la parte izquierda de la interfaz
 AUDIENCE_PROFILES = [
     {
         "label": "Creative people",
@@ -171,6 +175,12 @@ css_background = """
     backdrop-filter: blur(8px);
 }
 
+.stApp [data-testid="stAppViewBlockContainer"],
+.stApp [data-testid="stMainBlockContainer"] {
+    padding-top: clamp(6.5rem, 13vh, 8.75rem);
+    scroll-padding-top: clamp(6.5rem, 13vh, 8.75rem);
+}
+
 .stApp [data-testid="stForm"],
 .stApp [data-testid="stVerticalBlockBorderWrapper"] {
     background: var(--panel);
@@ -227,6 +237,53 @@ css_background = """
     color: var(--text-main);
 }
 
+.composer-flag {
+    display: none;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) {
+    width: min(100%, 54rem);
+    margin: 0.2rem auto 0 auto;
+    padding: 0.45rem 0.55rem 0.35rem;
+    border-radius: 24px;
+    background: rgba(255, 251, 246, 0.96);
+    border: 1px solid rgba(177, 135, 67, 0.18);
+    box-shadow: 0 14px 30px rgba(104, 72, 28, 0.08);
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) [data-baseweb="input"] {
+    background: rgba(240, 240, 244, 0.74);
+    border-radius: 18px;
+    border: 1px solid rgba(177, 135, 67, 0.12);
+    min-height: 3.2rem;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) [data-baseweb="input"] > div {
+    background: transparent;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) input {
+    font-size: 1rem;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) .stTextInput,
+.stApp [data-testid="stForm"]:has(.composer-flag) .stFormSubmitButton {
+    margin-bottom: 0;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) .stExpander {
+    margin-top: 0.3rem;
+}
+
+.stApp [data-testid="stForm"]:has(.composer-flag) .stExpander summary {
+    font-size: 0.92rem;
+}
+
+.page-top-spacer {
+    height: clamp(0.7rem, 2vh, 1.4rem);
+    pointer-events: none;
+}
+
 .app-title-row {
     display: flex;
     align-items: center;
@@ -234,7 +291,8 @@ css_background = """
     gap: 0.8rem;
     width: 100%;
     flex-wrap: wrap;
-    transform: translateX(2rem);
+    padding-top: 0;
+    overflow: visible;
 }
 
 .app-title-icon {
@@ -247,19 +305,22 @@ css_background = """
 .app-title {
     font-family: "Satisfy", "Brush Script MT", "Segoe Script",
         "Apple Chancery", cursive !important;
-    font-size: clamp(4rem, 6.7vw, 5.9rem);
-    line-height: 0.98;
+    font-size: clamp(3.45rem, 6vw, 5.2rem);
+    line-height: 1.12;
     color: #5b3a1f;
     margin: 0;
+    padding: 0.14em 0 0.08em;
     text-shadow: 0 7px 18px rgba(104, 72, 28, 0.14);
     font-weight: 400;
     letter-spacing: 0.01em;
     text-align: center;
+    overflow: visible;
 }
 
 .app-subtitle {
-    display: block;
-    width: min(100%, 44rem);
+    display: inline-block;
+    width: fit-content;
+    max-width: min(100%, 44rem);
     font-size: 1rem;
     font-weight: 700;
     color: #26412f;
@@ -271,15 +332,18 @@ css_background = """
     backdrop-filter: blur(8px);
     margin: 0.55rem auto 1.1rem auto;
     text-align: center;
+    line-height: 1.35;
 }
 
 .hero-shell {
     width: min(100%, 62rem);
     margin: 0 auto 1.15rem auto;
+    padding-top: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
+    overflow: visible;
 }
 
 .message-role {
@@ -385,7 +449,7 @@ css_background = """
 st.markdown(css_background, unsafe_allow_html=True)
 
 st.markdown(
-    """
+    """<div class="page-top-spacer"></div>
     <div class="hero-shell">
         <div class="app-title-row">
             <div class="app-title-icon">🎨</div>
@@ -394,12 +458,13 @@ st.markdown(
                 style="
                     font-family: 'Satisfy', 'Brush Script MT', 'Segoe Script',
                         'Apple Chancery', cursive;
-                    font-size: clamp(4rem, 6.7vw, 5.9rem);
+                    font-size: clamp(3.45rem, 6vw, 5.2rem);
                     font-weight: 400;
-                    line-height: 0.98;
+                    line-height: 1.12;
                     letter-spacing: 0.01em;
                     color: #5b3a1f;
                     margin: 0;
+                    padding: 0.14em 0 0.08em;
                     text-shadow: 0 7px 18px rgba(104, 72, 28, 0.14);
                     text-align: center;
                 "
@@ -433,12 +498,6 @@ if "editing_message_index" not in st.session_state:
 if "pending_regeneration" not in st.session_state:
     # Indica que debe regenerarse una respuesta después de guardar una edición.
     st.session_state.pending_regeneration = None
-
-
-def chat_input_supports_files():
-    """Comprueba si la versión instalada de Streamlit soporta carga de archivos en el chat."""
-    return "accept_file" in inspect.signature(st.chat_input).parameters
-
 
 def serialize_uploaded_images(uploaded_files):
     """Convierte archivos subidos en Streamlit a una estructura serializable en memoria.
@@ -554,16 +613,6 @@ def render_sidebar_audience_menu():
                 st.markdown(f"**{item['icon']} {item['label']}**")
                 st.write(item["description"])
 
-        st.markdown("---")
-        st.markdown(
-            """
-            **Design recommendation**
-
-            This sidebar works best as a curated guide:
-            choose a profile, show one strong image, and keep the chat as the
-            main action. That way the interface feels editorial instead of crowded.
-            """
-        )
 
 
 def save_edited_message(index, edited_text):
@@ -668,50 +717,55 @@ def build_model_message(message):
     return {"role": "user", "content": content}
 
 
-def get_user_submission(disabled=False):
-    """Lee el envío actual de la persona usuaria desde el compositor activo.
+def get_messages_container_height(message_count):
+    """Ajusta la altura del chat para evitar huecos grandes al inicio."""
+    if message_count <= 1:
+        return 360
 
-    Si la versión instalada de Streamlit soporta adjuntos en ``st.chat_input``,
-    se usa el chat nativo.
-    En caso contrario, se renderiza un formulario alternativo para poder enviar
-    texto y una o varias imágenes en versiones más antiguas.
+    if message_count <= 3:
+        return 500
+
+    if message_count <= 6:
+        return 600
+
+    return 720
+
+
+def get_user_submission(disabled=False):
+    """Lee el envío actual desde un compositor estable basado en formulario.
+
+    Se evita ``st.chat_input`` porque puede reposicionar la vista al montarse
+    durante un refresh, lo que dificulta ver el encabezado al cargar la página.
     """
     if disabled:
         st.info("Finish editing the selected message to continue chatting.")
         return None
 
-    if chat_input_supports_files():
-        prompt = st.chat_input(
-            "Upload an image of art and ask about it...",
-            accept_file="multiple",
-            file_type=SUPPORTED_IMAGE_TYPES,
-            disabled=disabled,
-        )
-
-        if not prompt:
-            return None
-
-        return {
-            "text": prompt.text.strip(),
-            "files": prompt.files,
-        }
-
-    st.caption(
-        "Your current Streamlit version does not support image uploads inside "
-        "`st.chat_input`, so this compatible composer is shown instead."
-    )
-
     with st.form("chat_with_image", clear_on_submit=True):
-        prompt_text = st.text_input(
-            "Ask about art...",
-            placeholder="Describe what you want to know about the artwork",
-        )
-        uploaded_files = st.file_uploader(
-            "Attach artwork images",
-            type=SUPPORTED_IMAGE_TYPES,
-            accept_multiple_files=True,
-        )
-        submitted = st.form_submit_button("Send")
+        st.markdown('<div class="composer-flag"></div>', unsafe_allow_html=True)
+
+        input_col, send_col = st.columns([8.8, 1.2], vertical_alignment="center")
+
+        with input_col:
+            prompt_text = st.text_input(
+                "Ask about art...",
+                label_visibility="collapsed",
+                placeholder="Upload an image of art and ask about it...",
+            )
+
+        with send_col:
+            submitted = st.form_submit_button("↑", use_container_width=True)
+
+        with st.expander("Attach artwork images"):
+            uploaded_files = st.file_uploader(
+                "Attach artwork images",
+                type=SUPPORTED_IMAGE_TYPES,
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+            )
+
+        if uploaded_files:
+            st.caption(f"{len(uploaded_files)} image(s) ready to send.")
 
     if submitted and (prompt_text.strip() or uploaded_files):
         return {"text": prompt_text.strip(), "files": uploaded_files}
@@ -722,14 +776,17 @@ def get_user_submission(disabled=False):
 render_sidebar_audience_menu()
 
 # Contenedor principal del historial de chat con scroll.
-messages_container = st.container(height=520, border=True)
+messages_container = st.container(
+    height=get_messages_container_height(len(st.session_state.messages)),
+    border=True,
+)
 
 for index, msg in enumerate(st.session_state.messages):
     render_message(msg, index, container=messages_container)
 
 
 def generate_assistant_reply(container):
-    """Envía la conversación actual a Gemini y muestra la respuesta en streaming."""
+    """Envía la conversación actual a Gemini o OpenAI y muestra la respuesta en streaming."""
     conversation = [{"role": "system", "content": stronger_prompt}]
     conversation.extend(build_model_message(message) for message in st.session_state.messages)
 
