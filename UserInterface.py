@@ -245,6 +245,119 @@ def get_artist_image_paths(artist_key, limit=6):
     return [path.resolve() for path in image_paths[:limit]]
 
 
+def get_artist_record_by_name(artist_name):
+    """Recupera una fila del dataset de artistas por nombre."""
+    if not artist_name:
+        return None
+
+    artists_df = load_artists_collection()
+    if artists_df.empty:
+        return None
+
+    matches = artists_df[artists_df["name"] == artist_name]
+    if matches.empty:
+        return None
+
+    return matches.iloc[0]
+
+
+def split_artist_genres(genre_value):
+    """Normaliza la lista de generos de un artista."""
+    if not isinstance(genre_value, str):
+        return set()
+
+    return {genre.strip().lower() for genre in genre_value.split(",") if genre.strip()}
+
+
+def get_related_artists(artist_name, limit=3):
+    """Busca artistas relacionados por genero y nacionalidad dentro del dataset local."""
+    artist = get_artist_record_by_name(artist_name)
+    artists_df = load_artists_collection()
+
+    if artist is None or artists_df.empty:
+        return []
+
+    base_genres = split_artist_genres(artist.get("genre", ""))
+    base_nationality = str(artist.get("nationality", "")).strip().lower()
+
+    candidates = artists_df[artists_df["name"] != artist_name].copy()
+    if candidates.empty:
+        return []
+
+    def score_candidate(row):
+        score = 0
+        candidate_genres = split_artist_genres(row.get("genre", ""))
+        score += len(base_genres.intersection(candidate_genres)) * 4
+
+        candidate_nationality = str(row.get("nationality", "")).strip().lower()
+        if base_nationality and candidate_nationality == base_nationality:
+            score += 3
+
+        image_count = row.get("image_count")
+        if pd.notna(image_count):
+            score += min(int(image_count), 6) * 0.2
+
+        paintings_count = row.get("paintings")
+        if pd.notna(paintings_count):
+            score += min(int(paintings_count), 250) * 0.01
+
+        return score
+
+    candidates["related_score"] = candidates.apply(score_candidate, axis=1)
+    candidates = candidates.sort_values(
+        by=["related_score", "image_count", "paintings", "name"],
+        ascending=[False, False, False, True],
+        na_position="last",
+    )
+
+    top_candidates = candidates.head(limit)
+    return [row for _, row in top_candidates.iterrows() if row["related_score"] > 0]
+
+
+def build_artist_reference_message():
+    """Construye un mensaje de sistema con el artista de referencia activo."""
+    artist_name = st.session_state.get("selected_artist_context_name")
+    artist = get_artist_record_by_name(artist_name)
+
+    if artist is None:
+        return None
+
+    bio_text = str(artist.get("bio", "Biography unavailable.")).strip()
+    bio_excerpt = bio_text[:900].rsplit(" ", 1)[0] + "..." if len(bio_text) > 900 else bio_text
+    paintings_value = artist.get("paintings")
+    paintings_label = int(paintings_value) if pd.notna(paintings_value) else "Unknown"
+    preview_count = len(get_artist_image_paths(artist.get("artist_key", ""), limit=6))
+    related_artists = get_related_artists(artist_name, limit=3)
+    related_block = "\n".join(
+        [
+            f"- {candidate['name']} | {candidate['nationality']} | {candidate['genre']}"
+            for candidate in related_artists
+        ]
+    ) or "- No close alternatives found in the local artist dataset."
+
+    context = f"""
+Use the following local artist profile as optional reference context for image analysis.
+Do not assume the uploaded artwork is by this artist. Treat it as a hypothesis anchor only.
+
+Artist reference:
+- Name: {artist.get('name', 'Unknown Artist')}
+- Years: {artist.get('years', 'Dates unavailable')}
+- Nationality: {artist.get('nationality', 'Unknown nationality')}
+- Genres: {artist.get('genre', 'Unknown genre')}
+- Paintings in local dataset: {paintings_label}
+- Local preview images available: {preview_count}
+- Bio summary: {bio_excerpt}
+
+Possible alternative artist references from the same local dataset:
+{related_block}
+
+When the user uploads an artwork image, compare the visual evidence against this profile.
+If the match feels weak, say so clearly and use the alternatives above when they fit better.
+"""
+
+    return {"role": "system", "content": context.strip()}
+
+
 # --------------------------------------------
 # Configuración de página y tema visual
 # --------------------------------------------
@@ -702,6 +815,10 @@ if "pending_regeneration" not in st.session_state:
     # Indica que debe regenerarse una respuesta después de guardar una edición.
     st.session_state.pending_regeneration = None
 
+if "selected_artist_context_name" not in st.session_state:
+    # Artista de referencia opcional para análisis de imágenes.
+    st.session_state.selected_artist_context_name = None
+
 def serialize_uploaded_images(uploaded_files):
     """Convierte archivos subidos en Streamlit a una estructura serializable en memoria.
 
@@ -927,6 +1044,8 @@ def render_artist_browser():
 
     selected_artist = filtered_df[filtered_df["name"] == selected_name].iloc[0]
     artist_images = get_artist_image_paths(selected_artist["artist_key"], limit=6)
+    is_active_context = st.session_state.get("selected_artist_context_name") == selected_name
+    related_artists = get_related_artists(selected_name, limit=3)
 
     details_col, gallery_col = st.columns([1.2, 1.55], vertical_alignment="top")
 
@@ -960,6 +1079,32 @@ def render_artist_browser():
             """,
             unsafe_allow_html=True,
         )
+
+        action_col, clear_col = st.columns([1.4, 1], vertical_alignment="center")
+        with action_col:
+            button_label = "Using this artist as reference" if is_active_context else "Use this artist for image analysis"
+            if st.button(
+                button_label,
+                key=f"use_artist_context_{selected_artist['artist_key']}",
+                disabled=is_active_context,
+                use_container_width=True,
+            ):
+                st.session_state.selected_artist_context_name = selected_name
+                st.rerun()
+
+        with clear_col:
+            if st.button(
+                "Clear reference",
+                key=f"clear_artist_context_{selected_artist['artist_key']}",
+                disabled=st.session_state.get("selected_artist_context_name") is None,
+                use_container_width=True,
+            ):
+                st.session_state.selected_artist_context_name = None
+                st.rerun()
+
+        if related_artists:
+            related_names = ", ".join(candidate["name"] for candidate in related_artists)
+            st.caption(f"Nearby references in your dataset: {related_names}")
 
     with gallery_col:
         if not artist_images:
@@ -1100,6 +1245,24 @@ def get_user_submission(disabled=False):
         st.info("Finish editing the selected message to continue chatting.")
         return None
 
+    active_artist = get_artist_record_by_name(
+        st.session_state.get("selected_artist_context_name")
+    )
+
+    if active_artist is not None:
+        related_artists = get_related_artists(active_artist["name"], limit=3)
+        alternatives_text = (
+            " | Alternatives: "
+            + ", ".join(candidate["name"] for candidate in related_artists)
+            if related_artists
+            else ""
+        )
+        st.info(
+            "Image analysis reference active: "
+            f"{active_artist['name']} | {active_artist['nationality']} | {active_artist['genre']}"
+            f"{alternatives_text}"
+        )
+
     with st.form("chat_with_image", clear_on_submit=True):
         st.markdown('<div class="composer-flag"></div>', unsafe_allow_html=True)
 
@@ -1150,6 +1313,16 @@ for index, msg in enumerate(st.session_state.messages):
 def generate_assistant_reply(container):
     """Envía la conversación actual a Gemini o OpenAI y muestra la respuesta en streaming."""
     conversation = [{"role": "system", "content": stronger_prompt}]
+
+    latest_user_message = next(
+        (message for message in reversed(st.session_state.messages) if message["role"] == "user"),
+        None,
+    )
+    if latest_user_message and latest_user_message.get("images"):
+        artist_reference_message = build_artist_reference_message()
+        if artist_reference_message is not None:
+            conversation.append(artist_reference_message)
+
     conversation.extend(build_model_message(message) for message in st.session_state.messages)
 
     with container.chat_message("assistant", avatar="🖌️"):
