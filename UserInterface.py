@@ -489,7 +489,7 @@ SUPPORTED_IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 # --------------------------------------------
 if "messages" not in st.session_state:
     # Los mensajes se guardan como diccionarios con "role", "content" y "images" opcional.
-    st.session_state.messages = [{"role": "assistant", "content": "Ask about art..."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Upload an image to uncover its artistic style, influences, and connections. Tell me your name to personalize your experience."}]
 
 if "editing_message_index" not in st.session_state:
     # Guarda el índice del mensaje del usuario que se está editando.
@@ -531,14 +531,17 @@ def get_image_display_kwargs():
     """Devuelve argumentos de renderizado compatibles con varias versiones de Streamlit.
 
     Las versiones nuevas prefieren ``width="stretch"``, mientras que las más
-    antiguas todavía usan ``use_container_width=True``.
+    antiguas todavía usan ``use_column_width=True``.
     """
-    width_parameter = inspect.signature(st.image).parameters.get("width")
+    image_signature = inspect.signature(st.image)
 
-    if width_parameter and width_parameter.default == "content":
+    if "use_container_width" in image_signature.parameters:
         return {"width": "stretch"}
 
-    return {"use_container_width": True}
+    if "use_column_width" in image_signature.parameters:
+        return {"use_column_width": True}
+
+    return {}
 
 
 def render_images(message):
@@ -605,7 +608,7 @@ def render_sidebar_audience_menu():
             unsafe_allow_html=True,
         )
 
-        st.image(profile["image_url"], use_container_width=True)
+        st.image(profile["image_url"], **get_image_display_kwargs())
         st.caption(profile["image_credit"])
 
         with st.expander("See all profiles"):
