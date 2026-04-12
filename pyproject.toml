@@ -15,4 +15,5 @@ dependencies = [
     "requests>=2.33.1",
     "streamlit>=1.56.0",
     "watchdog>=6.0.0",
+    "pillow>=12.2.0",
 ]

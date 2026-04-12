@@ -15,9 +15,14 @@ y paneles translúcidos para mejorar la legibilidad.
 # --------------------------------------------
 
 import base64
+import html
 import inspect
 import os
+import re
+from pathlib import Path
 
+import pandas as pd
+from PIL import Image
 from dotenv import load_dotenv
 from openai import OpenAI
 import streamlit as st
@@ -44,6 +49,10 @@ model_google = "gemini-2.5-flash"
 
 # Imagen local usada como fondo de la aplicación.
 BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/_ (1).jpeg"
+METADATA_CSV_PATH = Path(__file__).resolve().parent / "met_art_data" / "metadata_clean.csv"
+MET_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data" / "images"
+ARTISTS_CSV_PATH = Path(__file__).resolve().parent / "met_art_data" / "Artists2.csv"
+ARTIST_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data" / "resized 3"
 
 # Menú interactivo que se visualiza en la parte izquierda de la interfaz
 AUDIENCE_PROFILES = [
@@ -121,6 +130,119 @@ def get_background_image_data_url(image_path):
         encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
 
     return f"data:image/jpeg;base64,{encoded_image}"
+
+
+def resolve_met_image_path(raw_path):
+    """Convierte una ruta del CSV a una ruta local absoluta si existe."""
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+
+    candidate = Path(raw_path)
+    if candidate.is_absolute() and candidate.exists():
+        return candidate
+
+    candidate = (Path(__file__).resolve().parent / raw_path).resolve()
+    if candidate.exists():
+        return candidate
+
+    fallback = MET_IMAGES_DIR / Path(raw_path).name
+    if fallback.exists():
+        return fallback.resolve()
+
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def load_met_collection():
+    """Carga la colección curada del MET desde el CSV local."""
+    if not METADATA_CSV_PATH.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(METADATA_CSV_PATH).copy()
+
+    if "object_year" in df.columns:
+        df["object_year"] = pd.to_numeric(df["object_year"], errors="coerce")
+
+    if "artistDisplayName" in df.columns:
+        df["artistDisplayName"] = df["artistDisplayName"].fillna("Unknown Artist")
+
+    if "title" in df.columns:
+        df["title"] = df["title"].fillna("Untitled")
+
+    if "department" in df.columns:
+        df["department"] = df["department"].fillna("Unknown department")
+
+    if "medium" in df.columns:
+        df["medium"] = df["medium"].fillna("Unknown medium")
+
+    if "image_path" in df.columns:
+        df["resolved_image_path"] = df["image_path"].apply(resolve_met_image_path)
+    else:
+        df["resolved_image_path"] = None
+
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def load_met_thumbnail(image_path, max_size=(440, 440)):
+    """Prepara una imagen local para mostrarla como preview compacta."""
+    if not image_path:
+        return None
+
+    path = Path(image_path)
+    if not path.exists():
+        return None
+
+    with Image.open(path) as img:
+        preview = img.convert("RGB")
+        preview.thumbnail(max_size)
+        return preview.copy()
+
+
+def normalize_artist_key(name):
+    """Convierte el nombre del artista al patrón usado por las imágenes locales."""
+    if not isinstance(name, str):
+        return ""
+
+    cleaned = name.strip().replace(" ", "_")
+    return cleaned
+
+
+@st.cache_data(show_spinner=False)
+def load_artists_collection():
+    """Carga el dataset de artistas y enlaza sus imágenes locales."""
+    if not ARTISTS_CSV_PATH.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(ARTISTS_CSV_PATH).copy()
+    df["name"] = df["name"].fillna("Unknown Artist")
+    df["genre"] = df["genre"].fillna("Unknown genre")
+    df["nationality"] = df["nationality"].fillna("Unknown nationality")
+    df["years"] = df["years"].fillna("Dates unavailable")
+    df["bio"] = df["bio"].fillna("Biography unavailable.")
+    df["paintings"] = pd.to_numeric(df["paintings"], errors="coerce")
+    df["artist_key"] = df["name"].map(normalize_artist_key)
+    df["image_count"] = df["artist_key"].map(count_artist_images)
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def count_artist_images(artist_key):
+    """Cuenta cuantas previews locales hay para un artista."""
+    if not artist_key or not ARTIST_IMAGES_DIR.exists():
+        return 0
+
+    return len(list(ARTIST_IMAGES_DIR.glob(f"{artist_key}_*.jpg")))
+
+
+@st.cache_data(show_spinner=False)
+def get_artist_image_paths(artist_key, limit=6):
+    """Devuelve una lista corta de imágenes locales para un artista."""
+    if not artist_key or not ARTIST_IMAGES_DIR.exists():
+        return []
+
+    image_paths = sorted(ARTIST_IMAGES_DIR.glob(f"{artist_key}_*.jpg"))
+    return [path.resolve() for path in image_paths[:limit]]
 
 
 # --------------------------------------------
@@ -421,6 +543,87 @@ css_background = """
     line-height: 1.45;
 }
 
+.artist-browser-shell {
+    width: min(100%, 68rem);
+    margin: 0 auto 1.1rem auto;
+    padding: 1rem 1rem 0.85rem;
+    border-radius: 24px;
+    background: rgba(255, 251, 246, 0.88);
+    border: 1px solid rgba(177, 135, 67, 0.16);
+    box-shadow: 0 14px 34px rgba(104, 72, 28, 0.08);
+}
+
+.artist-browser-title {
+    font-size: 1.18rem;
+    font-weight: 800;
+    color: #3f2c1f;
+    margin-bottom: 0.24rem;
+}
+
+.artist-browser-copy {
+    color: rgba(63, 44, 31, 0.78);
+    line-height: 1.45;
+}
+
+.artist-hero-card {
+    background: linear-gradient(135deg, rgba(235, 247, 243, 0.94) 0%, rgba(255, 249, 240, 0.94) 100%);
+    border: 1px solid rgba(99, 150, 120, 0.18);
+    border-radius: 24px;
+    padding: 1rem;
+    box-shadow: 0 14px 32px rgba(66, 98, 73, 0.08);
+}
+
+.artist-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2d5b44;
+    background: rgba(214, 239, 225, 0.95);
+    border: 1px solid rgba(99, 150, 120, 0.18);
+    border-radius: 999px;
+    padding: 0.32rem 0.68rem;
+    margin-bottom: 0.7rem;
+}
+
+.artist-name {
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: #2f2418;
+    margin-bottom: 0.18rem;
+}
+
+.artist-years {
+    font-size: 0.95rem;
+    color: rgba(63, 44, 31, 0.76);
+    margin-bottom: 0.7rem;
+}
+
+.artist-statline {
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: #304635;
+}
+
+.artist-bio {
+    margin-top: 0.85rem;
+    font-size: 0.97rem;
+    line-height: 1.65;
+    color: #4b4338;
+}
+
+.artist-link {
+    display: inline-block;
+    margin-top: 0.8rem;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: #25543f;
+    text-decoration: none;
+}
+
 .app-signature {
     position: fixed;
     right: 1.15rem;
@@ -617,6 +820,159 @@ def render_sidebar_audience_menu():
                 st.write(item["description"])
 
 
+def render_artist_browser():
+    """Muestra un explorador filtrable de artistas con previews locales."""
+    artists_df = load_artists_collection()
+
+    st.markdown(
+        """
+        <div class="artist-browser-shell">
+            <div class="artist-browser-title">Artist Explorer</div>
+            <div class="artist-browser-copy">
+                Browse your local artist dataset by name, genre, and nationality, then preview a small gallery of works already stored on disk.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if artists_df.empty:
+        st.info("No pude cargar `met_art_data/Artists2.csv`.")
+        return
+
+    filter_col, genre_col, nation_col = st.columns([2.1, 1.4, 1.3])
+
+    with filter_col:
+        query = st.text_input(
+            "Search artists",
+            placeholder="Artist name or keyword from the bio",
+            label_visibility="collapsed",
+            key="artist_search_query",
+        ).strip().lower()
+
+    with genre_col:
+        genre_options = sorted(
+            {
+                genre.strip()
+                for value in artists_df["genre"].astype(str)
+                for genre in value.split(",")
+                if genre.strip()
+            }
+        )
+        selected_genres = st.multiselect(
+            "Genre",
+            genre_options,
+            default=[],
+            placeholder="All genres",
+            label_visibility="collapsed",
+            key="artist_genres",
+        )
+
+    with nation_col:
+        nationality_options = sorted(
+            value for value in artists_df["nationality"].dropna().astype(str).unique() if value
+        )
+        selected_nationalities = st.multiselect(
+            "Nationality",
+            nationality_options,
+            default=[],
+            placeholder="All nationalities",
+            label_visibility="collapsed",
+            key="artist_nationalities",
+        )
+
+    filtered_df = artists_df.copy()
+
+    if query:
+        filtered_df = filtered_df[
+            filtered_df["name"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["bio"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["genre"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["nationality"].astype(str).str.lower().str.contains(query, na=False)
+        ]
+
+    if selected_genres:
+        genre_pattern = "|".join(re.escape(genre) for genre in selected_genres)
+        filtered_df = filtered_df[
+            filtered_df["genre"].astype(str).str.contains(genre_pattern, case=False, na=False)
+        ]
+
+    if selected_nationalities:
+        filtered_df = filtered_df[
+            filtered_df["nationality"].isin(selected_nationalities)
+        ]
+
+    filtered_df = filtered_df.sort_values(
+        by=["image_count", "paintings", "name"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+
+    st.caption(f"{len(filtered_df)} artist(s) match your filters.")
+
+    if filtered_df.empty:
+        st.warning("No artists match those filters yet. Try broadening the search.")
+        return
+
+    artist_names = filtered_df["name"].tolist()
+    default_name = artist_names[0]
+
+    selected_name = st.selectbox(
+        "Select artist",
+        options=artist_names,
+        index=0,
+        label_visibility="collapsed",
+        key="artist_selectbox",
+    )
+
+    selected_artist = filtered_df[filtered_df["name"] == selected_name].iloc[0]
+    artist_images = get_artist_image_paths(selected_artist["artist_key"], limit=6)
+
+    details_col, gallery_col = st.columns([1.2, 1.55], vertical_alignment="top")
+
+    with details_col:
+        bio_text = str(selected_artist.get("bio", "Biography unavailable.")).strip()
+        bio_excerpt = bio_text[:620].rsplit(" ", 1)[0] + "..." if len(bio_text) > 620 else bio_text
+        paintings_value = selected_artist.get("paintings")
+        paintings_label = int(paintings_value) if pd.notna(paintings_value) else "Unknown"
+        wikipedia_url = str(selected_artist.get("wikipedia", "")).strip()
+        wikipedia_link = (
+            f'<a class="artist-link" href="{html.escape(wikipedia_url, quote=True)}" target="_blank" rel="noopener noreferrer">Open artist reference</a>'
+            if wikipedia_url and wikipedia_url.lower() != "nan"
+            else ""
+        )
+
+        st.markdown(
+            f"""
+            <div class="artist-hero-card">
+                <div class="artist-kicker">Dataset Profile</div>
+                <div class="artist-name">{html.escape(str(selected_artist['name']))}</div>
+                <div class="artist-years">{html.escape(str(selected_artist['years']))}</div>
+                <div class="artist-statline">
+                    <strong>Nationality:</strong> {html.escape(str(selected_artist['nationality']))}<br/>
+                    <strong>Genres:</strong> {html.escape(str(selected_artist['genre']))}<br/>
+                    <strong>Paintings in dataset:</strong> {paintings_label}<br/>
+                    <strong>Local previews:</strong> {len(artist_images)}
+                </div>
+                <div class="artist-bio">{html.escape(bio_excerpt)}</div>
+                {wikipedia_link}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with gallery_col:
+        if not artist_images:
+            st.info("No local previews found for this artist in `met_art_data/resized 3`.")
+        else:
+            image_cols = st.columns(3)
+            for index, image_path in enumerate(artist_images):
+                preview = load_met_thumbnail(image_path, max_size=(340, 340))
+                with image_cols[index % 3]:
+                    if preview is not None:
+                        st.image(preview, width=210)
+
+
 
 def save_edited_message(index, edited_text):
     """Guarda un mensaje editado por la persona usuaria y activa la regeneración.
@@ -777,6 +1133,9 @@ def get_user_submission(disabled=False):
 
 
 render_sidebar_audience_menu()
+
+with st.expander("Explore the most influential artists from around the world", expanded=False):
+    render_artist_browser()
 
 # Contenedor principal del historial de chat con scroll.
 messages_container = st.container(
