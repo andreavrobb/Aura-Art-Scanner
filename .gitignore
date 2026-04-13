@@ -78,6 +78,9 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Local museum bundle used by the app, but too large for normal GitHub pushes.
+met_art_data2/images_updated.zip
+
 # IPython
 profile_default/
 ipython_config.py

@@ -19,7 +19,9 @@ import html
 import inspect
 import os
 import re
+import shutil
 from pathlib import Path
+import zipfile
 
 import pandas as pd
 from PIL import Image
@@ -48,9 +50,12 @@ client_google = OpenAI(api_key=GOOGLE_API_KEY, base_url=GEMINI_BASE_URL)
 model_google = "gemini-2.5-flash"
 
 # Imagen local usada como fondo de la aplicación.
-BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/_ (1).jpeg"
-METADATA_CSV_PATH = Path(__file__).resolve().parent / "met_art_data" / "metadata_clean.csv"
-MET_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data" / "images"
+# Fondo principal de la interfaz.
+BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/تسهيل العقيدة الاسلامية.jpeg"
+AURA_LOGO_PATH = Path("/Users/andreavrob/Desktop/Aura.jpg")
+METADATA_CSV_PATH = Path(__file__).resolve().parent / "met_art_data2" / "metadata_cleaned_updated.csv"
+MET_IMAGES_ZIP_PATH = Path(__file__).resolve().parent / "met_art_data2" / "images_updated.zip"
+MET_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data2" / "images_extracted"
 ARTISTS_CSV_PATH = Path(__file__).resolve().parent / "met_art_data" / "Artists2.csv"
 ARTIST_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data" / "resized 3"
 
@@ -132,10 +137,39 @@ def get_background_image_data_url(image_path):
     return f"data:image/jpeg;base64,{encoded_image}"
 
 
+@st.cache_resource(show_spinner=False)
+def ensure_met_images_extracted():
+    """Extrae el zip del nuevo dataset en una carpeta local plana."""
+    MET_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not MET_IMAGES_ZIP_PATH.exists():
+        return MET_IMAGES_DIR
+
+    with zipfile.ZipFile(MET_IMAGES_ZIP_PATH) as archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+
+            filename = Path(member.filename).name
+            if not filename:
+                continue
+
+            target_path = MET_IMAGES_DIR / filename
+            if target_path.exists() and target_path.stat().st_size > 0:
+                continue
+
+            with archive.open(member) as source, open(target_path, "wb") as destination:
+                shutil.copyfileobj(source, destination)
+
+    return MET_IMAGES_DIR
+
+
 def resolve_met_image_path(raw_path):
     """Convierte una ruta del CSV a una ruta local absoluta si existe."""
     if not isinstance(raw_path, str) or not raw_path.strip():
         return None
+
+    ensure_met_images_extracted()
 
     candidate = Path(raw_path)
     if candidate.is_absolute() and candidate.exists():
@@ -154,7 +188,7 @@ def resolve_met_image_path(raw_path):
 
 @st.cache_data(show_spinner=False)
 def load_met_collection():
-    """Carga la colección curada del MET desde el CSV local."""
+    """Carga la nueva colección curada del MET desde el CSV local."""
     if not METADATA_CSV_PATH.exists():
         return pd.DataFrame()
 
@@ -169,13 +203,36 @@ def load_met_collection():
     if "title" in df.columns:
         df["title"] = df["title"].fillna("Untitled")
 
+    if "artistDisplayName" in df.columns:
+        df["artistDisplayName"] = df["artistDisplayName"].fillna("Unknown Artist")
+
+    if "artistRole" in df.columns:
+        df["artistRole"] = df["artistRole"].fillna("Unknown role")
+
+    if "objectDate" in df.columns:
+        df["objectDate"] = df["objectDate"].fillna("Date unavailable")
+
     if "department" in df.columns:
         df["department"] = df["department"].fillna("Unknown department")
 
     if "medium" in df.columns:
         df["medium"] = df["medium"].fillna("Unknown medium")
 
-    if "image_path" in df.columns:
+    if "dimensions" in df.columns:
+        df["dimensions"] = df["dimensions"].fillna("Dimensions unavailable")
+
+    if "culture" in df.columns:
+        df["culture"] = df["culture"].fillna("")
+
+    if "period" in df.columns:
+        df["period"] = df["period"].fillna("")
+
+    if "artist_slug" in df.columns:
+        df["artist_slug"] = df["artist_slug"].fillna("")
+
+    if "localImageFileName" in df.columns:
+        df["resolved_image_path"] = df["localImageFileName"].apply(resolve_met_image_path)
+    elif "image_path" in df.columns:
         df["resolved_image_path"] = df["image_path"].apply(resolve_met_image_path)
     else:
         df["resolved_image_path"] = None
@@ -261,6 +318,32 @@ def get_artist_record_by_name(artist_name):
     return matches.iloc[0]
 
 
+def get_met_object_record_by_id(object_id):
+    """Recupera una fila del nuevo dataset por objectID."""
+    if object_id is None:
+        return None
+
+    met_df = load_met_collection()
+    if met_df.empty:
+        return None
+
+    matches = met_df[met_df["objectID"].astype(str) == str(object_id)]
+    if matches.empty:
+        return None
+
+    return matches.iloc[0]
+
+
+def normalize_lookup_value(value):
+    """Normaliza texto para comparaciones simples en el explorador del MET."""
+    if not isinstance(value, str):
+        value = str(value)
+
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def split_artist_genres(genre_value):
     """Normaliza la lista de generos de un artista."""
     if not isinstance(genre_value, str):
@@ -314,6 +397,62 @@ def get_related_artists(artist_name, limit=3):
     return [row for _, row in top_candidates.iterrows() if row["related_score"] > 0]
 
 
+def get_related_met_objects(object_row, limit=3):
+    """Busca objetos relacionados por artista, departamento, periodo y cultura."""
+    met_df = load_met_collection()
+    if object_row is None or met_df.empty:
+        return []
+
+    base_object_id = object_row.get("objectID")
+    candidates = met_df[met_df["objectID"] != base_object_id].copy()
+    if candidates.empty:
+        return []
+
+    base_artist = normalize_lookup_value(object_row.get("artistDisplayName", ""))
+    base_department = normalize_lookup_value(object_row.get("department", ""))
+    base_period = normalize_lookup_value(object_row.get("period", ""))
+    base_culture = normalize_lookup_value(object_row.get("culture", ""))
+    base_year = object_row.get("object_year")
+
+    def score_candidate(row):
+        score = 0
+        candidate_artist = normalize_lookup_value(row.get("artistDisplayName", ""))
+        candidate_department = normalize_lookup_value(row.get("department", ""))
+        candidate_period = normalize_lookup_value(row.get("period", ""))
+        candidate_culture = normalize_lookup_value(row.get("culture", ""))
+
+        if base_artist and base_artist != "unknown artist" and candidate_artist == base_artist:
+            score += 4
+
+        if base_department and candidate_department == base_department:
+            score += 3
+
+        if base_period and candidate_period == base_period:
+            score += 2
+
+        if base_culture and candidate_culture == base_culture:
+            score += 1.5
+
+        candidate_year = row.get("object_year")
+        if pd.notna(base_year) and pd.notna(candidate_year):
+            score += max(0, 2 - (abs(float(candidate_year) - float(base_year)) / 25))
+
+        if bool(row.get("has_local_image", False)):
+            score += 0.2
+
+        return score
+
+    candidates["related_score"] = candidates.apply(score_candidate, axis=1)
+    candidates = candidates.sort_values(
+        by=["related_score", "object_year", "title", "artistDisplayName"],
+        ascending=[False, False, True, True],
+        na_position="last",
+    )
+
+    top_candidates = candidates.head(limit)
+    return [row for _, row in top_candidates.iterrows() if row["related_score"] > 0]
+
+
 def build_artist_reference_message():
     """Construye un mensaje de sistema con el artista de referencia activo."""
     artist_name = st.session_state.get("selected_artist_context_name")
@@ -358,12 +497,65 @@ If the match feels weak, say so clearly and use the alternatives above when they
     return {"role": "system", "content": context.strip()}
 
 
+def build_met_object_reference_message():
+    """Construye un mensaje de sistema con el objeto local activo como referencia."""
+    object_id = st.session_state.get("selected_met_object_context_id")
+    met_object = get_met_object_record_by_id(object_id)
+
+    if met_object is None:
+        return None
+
+    related_objects = get_related_met_objects(met_object, limit=3)
+    related_block = "\n".join(
+        [
+            f"- {candidate.get('title', 'Untitled')} | {candidate.get('artistDisplayName', 'Unknown Artist')} | {candidate.get('department', 'Unknown department')}"
+            for candidate in related_objects
+        ]
+    ) or "- No close alternatives found in the local object dataset."
+
+    object_year = met_object.get("object_year")
+    object_year_label = int(object_year) if pd.notna(object_year) else "Unknown"
+    image_preview = met_object.get("resolved_image_path")
+    image_label = "Yes" if image_preview else "No"
+
+    context = f"""
+Use the following local museum object as optional reference context for image analysis.
+Do not assume the uploaded artwork is this object. Treat it as a hypothesis anchor only.
+
+Selected object:
+- Object ID: {met_object.get('objectID', 'Unknown')}
+- Title: {met_object.get('title', 'Untitled')}
+- Artist: {met_object.get('artistDisplayName', 'Unknown Artist')}
+- Artist role: {met_object.get('artistRole', 'Unknown role')}
+- Date: {met_object.get('objectDate', 'Date unavailable')}
+- Object year: {object_year_label}
+- Department: {met_object.get('department', 'Unknown department')}
+- Culture: {met_object.get('culture', 'Unknown')}
+- Period: {met_object.get('period', 'Unknown')}
+- Medium: {met_object.get('medium', 'Unknown medium')}
+- Dimensions: {met_object.get('dimensions', 'Dimensions unavailable')}
+- Local image available: {image_label}
+
+Possible alternative objects from the same local dataset:
+{related_block}
+
+When the user uploads an artwork image, compare the visual evidence against this object profile.
+If the match feels weak, say so clearly and use the alternatives above when they fit better.
+"""
+
+    return {"role": "system", "content": context.strip()}
+
+
 # --------------------------------------------
 # Configuración de página y tema visual
 # --------------------------------------------
-st.set_page_config(page_title="Aura Art Scanner", page_icon="🎨")
+st.set_page_config(
+    page_title="Aura Art Scanner",
+    page_icon=str(AURA_LOGO_PATH) if AURA_LOGO_PATH.exists() else "🎨",
+)
 
 background_image_url = get_background_image_data_url(BACKGROUND_IMAGE_PATH)
+logo_image_url = get_background_image_data_url(str(AURA_LOGO_PATH)) if AURA_LOGO_PATH.exists() else None
 
 if background_image_url:
     # Superpone un velo cálido suave para que los paneles de texto destaquen mejor.
@@ -384,7 +576,7 @@ else:
 
 css_background = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Satisfy&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Quicksand&display=swap');
 
 :root {
     --panel: rgba(255, 252, 247, 0.78);
@@ -519,6 +711,26 @@ css_background = """
     pointer-events: none;
 }
 
+.brand-mark {
+    width: clamp(4.6rem, 7vw, 6.1rem);
+    aspect-ratio: 1;
+    border-radius: 26px;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(177, 135, 67, 0.14);
+    box-shadow: 0 18px 36px rgba(43, 67, 104, 0.12);
+    padding: 0.45rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(12px);
+}
+
+.brand-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
 .app-title-row {
     display: flex;
     align-items: center;
@@ -572,7 +784,7 @@ css_background = """
 
 .hero-shell {
     width: min(100%, 62rem);
-    margin: 0 auto 1.15rem auto;
+    margin: -3.15rem auto 1.15rem auto;
     padding-top: 0;
     display: flex;
     flex-direction: column;
@@ -678,6 +890,246 @@ css_background = """
     line-height: 1.45;
 }
 
+.met-browser-shell {
+    width: min(100%, 68rem);
+    margin: 0 auto 1.1rem auto;
+    padding: 1rem 1rem 0.85rem;
+    border-radius: 24px;
+    background: rgba(248, 251, 255, 0.88);
+    border: 1px solid rgba(63, 104, 150, 0.16);
+    box-shadow: 0 14px 34px rgba(43, 67, 104, 0.08);
+}
+
+.met-browser-title {
+    font-size: 1.18rem;
+    font-weight: 800;
+    color: #2f3f58;
+    margin-bottom: 0.24rem;
+}
+
+.met-browser-copy {
+    color: rgba(47, 63, 88, 0.78);
+    line-height: 1.45;
+}
+
+.quickstart-shell {
+    width: min(100%, 68rem);
+    margin: 0 auto 1rem auto;
+    padding: 1rem 1rem 0.9rem;
+    border-radius: 24px;
+    background: linear-gradient(135deg, rgba(255, 248, 235, 0.92) 0%, rgba(239, 249, 245, 0.92) 100%);
+    border: 1px solid rgba(177, 135, 67, 0.16);
+    box-shadow: 0 14px 34px rgba(104, 72, 28, 0.08);
+}
+
+.quickstart-hero {
+    display: grid;
+    grid-template-columns: minmax(120px, 170px) 1fr;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 0.95rem;
+}
+
+.quickstart-logo-card {
+    background: rgba(255, 255, 255, 0.84);
+    border: 1px solid rgba(177, 135, 67, 0.14);
+    border-radius: 24px;
+    padding: 0.9rem;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.quickstart-logo-card img {
+    width: 100%;
+    max-width: 148px;
+    display: block;
+    margin: 0 auto;
+    object-fit: contain;
+}
+
+.quickstart-text {
+    min-width: 0;
+}
+
+.quickstart-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2d5b44;
+    background: rgba(214, 239, 225, 0.95);
+    border: 1px solid rgba(99, 150, 120, 0.18);
+    border-radius: 999px;
+    padding: 0.32rem 0.68rem;
+    margin-bottom: 0.75rem;
+}
+
+.quickstart-title {
+    font-size: 1.28rem;
+    font-weight: 800;
+    color: #3a2c1e;
+    margin-bottom: 0.28rem;
+}
+
+.quickstart-copy {
+    color: rgba(58, 44, 30, 0.78);
+    line-height: 1.55;
+    margin-bottom: 0.85rem;
+}
+
+.quickstart-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+}
+
+.quickstart-card {
+    background: rgba(255, 252, 247, 0.9);
+    border: 1px solid rgba(177, 135, 67, 0.14);
+    border-radius: 20px;
+    padding: 0.9rem 0.95rem;
+}
+
+.quickstart-card-title {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #2e241a;
+    margin-bottom: 0.28rem;
+}
+
+.quickstart-card-copy {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: #5a5147;
+}
+
+.context-summary-shell {
+    width: min(100%, 68rem);
+    margin: 0 auto 0.95rem auto;
+    padding: 0.95rem 1rem;
+    border-radius: 22px;
+    background: rgba(245, 250, 255, 0.9);
+    border: 1px solid rgba(63, 104, 150, 0.14);
+    box-shadow: 0 12px 28px rgba(43, 67, 104, 0.07);
+}
+
+.context-summary-title {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #2f3f58;
+    margin-bottom: 0.45rem;
+}
+
+.context-summary-copy {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: #49566a;
+}
+
+.right-rail-shell {
+    width: 100%;
+    padding: 0.95rem 1rem 0.85rem;
+    border-radius: 22px;
+    background: rgba(255, 251, 246, 0.92);
+    border: 1px solid rgba(177, 135, 67, 0.16);
+    box-shadow: 0 14px 32px rgba(104, 72, 28, 0.08);
+}
+
+.right-rail-brand {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 0.8rem;
+}
+
+.right-rail-brand img {
+    width: min(100%, 124px);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.84);
+    border: 1px solid rgba(177, 135, 67, 0.14);
+    box-shadow: 0 14px 28px rgba(43, 67, 104, 0.1);
+    padding: 0.55rem;
+}
+
+.right-rail-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2d5b44;
+    background: rgba(214, 239, 225, 0.95);
+    border: 1px solid rgba(99, 150, 120, 0.18);
+    border-radius: 999px;
+    padding: 0.32rem 0.68rem;
+    margin-bottom: 0.72rem;
+}
+
+.right-rail-title {
+    font-size: 1.06rem;
+    font-weight: 800;
+    color: #33271c;
+    margin-bottom: 0.28rem;
+}
+
+.right-rail-copy {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: #5a5147;
+    margin-bottom: 0.75rem;
+}
+
+.right-rail-note {
+    margin-top: 0.8rem;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: #6a5d4f;
+    padding-top: 0.7rem;
+    border-top: 1px solid rgba(177, 135, 67, 0.14);
+}
+
+/* Make selected radio controls feel lighter and more aligned with the Aura palette. */
+.stApp input[type="radio"] {
+    accent-color: #6b7280;
+}
+
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"],
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"] * {
+    color: #6b7280 !important;
+}
+
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"]::before,
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"]::after,
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"] svg,
+.stApp [data-testid="stRadio"] [role="radio"][aria-checked="true"] path {
+    border-color: #6b7280 !important;
+    background-color: #6b7280 !important;
+    fill: #6b7280 !important;
+    stroke: #6b7280 !important;
+}
+
+.stApp div[data-baseweb="radio"] input[type="radio"]:checked + div {
+    border-color: #6b7280 !important;
+}
+
+.stApp div[data-baseweb="radio"] input[type="radio"]:checked + div > div {
+    background-color: #6b7280 !important;
+}
+
+.stApp div[data-baseweb="radio"] [aria-checked="true"] {
+    color: #2f3f58;
+}
+
+.stApp [data-testid="stVerticalBlockBorderWrapper"]:has(.right-rail-flag) {
+    position: sticky;
+    top: 7.2rem;
+    align-self: flex-start;
+}
+
 .artist-hero-card {
     background: linear-gradient(135deg, rgba(235, 247, 243, 0.94) 0%, rgba(255, 249, 240, 0.94) 100%);
     border: 1px solid rgba(99, 150, 120, 0.18);
@@ -765,28 +1217,12 @@ css_background = """
 st.markdown(css_background, unsafe_allow_html=True)
 
 st.markdown(
-    """<div class="page-top-spacer"></div>
+    f"""<div class="page-top-spacer"></div>
     <div class="hero-shell">
         <div class="app-title-row">
-            <div class="app-title-icon">🎨</div>
-            <h1
-                class="app-title"
-                style="
-                    font-family: 'Satisfy', 'Brush Script MT', 'Segoe Script',
-                        'Apple Chancery', cursive;
-                    font-size: clamp(3.45rem, 6vw, 5.2rem);
-                    font-weight: 400;
-                    line-height: 1.12;
-                    letter-spacing: 0.01em;
-                    color: #5b3a1f;
-                    margin: 0;
-                    padding: 0.14em 0 0.08em;
-                    text-shadow: 0 7px 18px rgba(104, 72, 28, 0.14);
-                    text-align: center;
-                "
-            >
-                Aura Art Scanner
-            </h1>
+            <div class="brand-mark" style="width: clamp(7.2rem, 14vw, 10rem);">
+                <img src="{logo_image_url or ''}" alt="Aura logo" />
+            </div>
         </div>
         <div class="app-subtitle">
             This is a tool that helps you scan art and get information about it 🖌
@@ -818,6 +1254,14 @@ if "pending_regeneration" not in st.session_state:
 if "selected_artist_context_name" not in st.session_state:
     # Artista de referencia opcional para análisis de imágenes.
     st.session_state.selected_artist_context_name = None
+
+if "selected_met_object_context_id" not in st.session_state:
+    # Objeto del MET de referencia opcional para análisis de imágenes.
+    st.session_state.selected_met_object_context_id = None
+
+if "active_primary_panel" not in st.session_state:
+    # Sección principal visible en el área central.
+    st.session_state.active_primary_panel = "Chat Studio"
 
 def serialize_uploaded_images(uploaded_files):
     """Convierte archivos subidos en Streamlit a una estructura serializable en memoria.
@@ -900,6 +1344,17 @@ def render_role_marker(role):
 def render_sidebar_audience_menu():
     """Renderiza un menú lateral curado con perfiles a quienes puede interesar el arte."""
     with st.sidebar:
+        st.markdown("## Start Here")
+        st.caption("Aura helps you explore art, compare references, and analyze uploaded images with guided context.")
+
+        with st.expander("How to use Aura", expanded=True):
+            st.markdown("**1. Chat with an artwork**")
+            st.write("Upload an image or type a question to get an explanation, interpretation, or comparison.")
+            st.markdown("**2. Browse references**")
+            st.write("Open the Artist Explorer or MET Object Explorer to find a relevant reference.")
+            st.markdown("**3. Activate context**")
+            st.write("Use a selected artist or object as optional context so the chat can answer more precisely.")
+
         st.markdown("## Who Might Love Aura Art Scanner?")
         st.caption("A quick guide to the kinds of people this experience can speak to.")
 
@@ -935,6 +1390,137 @@ def render_sidebar_audience_menu():
             for item in AUDIENCE_PROFILES:
                 st.markdown(f"**{item['icon']} {item['label']}**")
                 st.write(item["description"])
+
+
+def render_quick_start():
+    """Muestra una guía breve para entender la app de un vistazo."""
+    st.markdown(
+        """
+        <div class="quickstart-shell">
+            <div class="quickstart-kicker">How Aura Works</div>
+            <div class="quickstart-title">Explore art in three simple ways</div>
+            <div class="quickstart-copy">
+                Ask questions, upload an artwork image, or activate a local reference from your datasets. Aura will use that context to make the conversation more grounded and easier to follow.
+            </div>
+            <div class="quickstart-grid">
+                <div class="quickstart-card">
+                    <div class="quickstart-card-title">Chat</div>
+                    <div class="quickstart-card-copy">Ask about style, symbolism, influences, movements, or historical context.</div>
+                </div>
+                <div class="quickstart-card">
+                    <div class="quickstart-card-title">Upload Images</div>
+                    <div class="quickstart-card-copy">Send one or more artwork images so Aura can compare visual evidence with your prompt.</div>
+                </div>
+                <div class="quickstart-card">
+                    <div class="quickstart-card-title">Use References</div>
+                    <div class="quickstart-card-copy">Pick an artist or a museum object to guide the response without forcing a match.</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_active_context_summary():
+    """Resume el contexto activo para que el usuario entienda lo que guiara el chat."""
+    active_artist = get_artist_record_by_name(
+        st.session_state.get("selected_artist_context_name")
+    )
+    active_met_object = get_met_object_record_by_id(
+        st.session_state.get("selected_met_object_context_id")
+    )
+
+    if active_artist is None and active_met_object is None:
+        st.markdown(
+            """
+            <div class="context-summary-shell">
+                <div class="context-summary-title">Current Chat Mode</div>
+                <div class="context-summary-copy">
+                    No local reference is active. Aura will answer from your prompt and any uploaded images only.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    parts = []
+    if active_artist is not None:
+        parts.append(
+            f"<strong>Artist reference:</strong> {html.escape(str(active_artist['name']))} | {html.escape(str(active_artist['nationality']))} | {html.escape(str(active_artist['genre']))}"
+        )
+
+    if active_met_object is not None:
+        parts.append(
+            f"<strong>Object reference:</strong> {html.escape(str(active_met_object['title']))} | {html.escape(str(active_met_object['artistDisplayName']))} | {html.escape(str(active_met_object['department']))}"
+        )
+
+    st.markdown(
+        f"""
+        <div class="context-summary-shell">
+            <div class="context-summary-title">Current Chat Mode</div>
+            <div class="context-summary-copy">
+                {'<br/>'.join(parts)}<br/><br/>
+                Aura will use this as optional context, but it should still check your image and prompt before making claims.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_right_navigation():
+    """Renderiza un menú vertical a la derecha para navegar entre secciones."""
+    st.markdown(
+        """
+        <div class="right-rail-flag"></div>
+        <div class="right-rail-shell">
+            <div class="right-rail-kicker">Navigate Aura</div>
+            <div class="right-rail-title">Choose a workspace</div>
+            <div class="right-rail-copy">
+                Move between the conversation, your artist references, and the museum object dataset without leaving the current screen.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    selected_panel = st.radio(
+        "Navigate Aura",
+        options=["Chat Studio", "Artist Explorer", "MET Object Explorer"],
+        index=["Chat Studio", "Artist Explorer", "MET Object Explorer"].index(
+            st.session_state.get("active_primary_panel", "Chat Studio")
+        ),
+        key="active_primary_panel",
+        label_visibility="collapsed",
+    )
+
+    active_artist = get_artist_record_by_name(
+        st.session_state.get("selected_artist_context_name")
+    )
+    active_met_object = get_met_object_record_by_id(
+        st.session_state.get("selected_met_object_context_id")
+    )
+
+    note_parts = []
+    if active_artist is not None:
+        note_parts.append(f"Artist active: {active_artist['name']}")
+    if active_met_object is not None:
+        note_parts.append(f"Object active: {active_met_object['title']}")
+    if not note_parts:
+        note_parts.append("No local reference active yet.")
+
+    st.markdown(
+        f"""
+        <div class="right-rail-note">
+            {'<br/>'.join(note_parts)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    return selected_panel
 
 
 def render_artist_browser():
@@ -1116,7 +1702,225 @@ def render_artist_browser():
                 with image_cols[index % 3]:
                     if preview is not None:
                         st.image(preview, width=210)
+ 
 
+
+def render_met_object_browser():
+    """Muestra un explorador filtrable de obras del MET con imagen local."""
+    met_df = load_met_collection()
+
+    st.markdown(
+        """
+        <div class="met-browser-shell">
+            <div class="met-browser-title">MET Object Explorer</div>
+            <div class="met-browser-copy">
+                Browse the new museum object dataset by title, artist, department, period, and year, then preview the local image extracted from the archive.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if met_df.empty:
+        st.info("No pude cargar `met_art_data2/metadata_cleaned_updated.csv`.")
+        return
+
+    query_col, dept_col, period_col, role_col = st.columns([2.2, 1.2, 1.2, 1.1])
+
+    with query_col:
+        query = st.text_input(
+            "Search works",
+            placeholder="Title, artist, medium, culture, or department",
+            label_visibility="collapsed",
+            key="met_search_query",
+        ).strip().lower()
+
+    with dept_col:
+        department_options = sorted(
+            value for value in met_df["department"].dropna().astype(str).unique() if value
+        )
+        selected_departments = st.multiselect(
+            "Department",
+            department_options,
+            default=[],
+            placeholder="All departments",
+            label_visibility="collapsed",
+            key="met_departments",
+        )
+
+    with period_col:
+        period_options = sorted(
+            value for value in met_df["period"].dropna().astype(str).unique() if value
+        )
+        selected_periods = st.multiselect(
+            "Period",
+            period_options,
+            default=[],
+            placeholder="All periods",
+            label_visibility="collapsed",
+            key="met_periods",
+        )
+
+    with role_col:
+        role_options = sorted(
+            value for value in met_df["artistRole"].dropna().astype(str).unique() if value
+        )
+        selected_roles = st.multiselect(
+            "Role",
+            role_options,
+            default=[],
+            placeholder="All roles",
+            label_visibility="collapsed",
+            key="met_roles",
+        )
+
+    filtered_df = met_df.copy()
+
+    if query:
+        query_mask = (
+            filtered_df["title"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["artistDisplayName"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["artistRole"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["objectDate"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["medium"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["department"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["culture"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["period"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["dimensions"].astype(str).str.lower().str.contains(query, na=False)
+            | filtered_df["objectID"].astype(str).str.contains(query, na=False)
+        )
+        filtered_df = filtered_df[query_mask]
+
+    if selected_departments:
+        filtered_df = filtered_df[filtered_df["department"].isin(selected_departments)]
+
+    if selected_periods:
+        filtered_df = filtered_df[filtered_df["period"].isin(selected_periods)]
+
+    if selected_roles:
+        filtered_df = filtered_df[filtered_df["artistRole"].isin(selected_roles)]
+
+    year_values = filtered_df["object_year"].dropna()
+    if not year_values.empty:
+        year_min = int(year_values.min())
+        year_max = min(int(year_values.max()), 2026)
+        year_min = min(year_min, year_max)
+        year_range = st.slider(
+            "Object year",
+            min_value=year_min,
+            max_value=year_max,
+            value=(year_min, year_max),
+            key="met_year_range",
+        )
+        filtered_df = filtered_df[
+            filtered_df["object_year"].isna()
+            | filtered_df["object_year"].between(year_range[0], year_range[1])
+        ]
+
+    filtered_df = filtered_df.sort_values(
+        by=["object_year", "department", "artistDisplayName", "title"],
+        ascending=[False, True, True, True],
+        na_position="last",
+    )
+
+    st.caption(f"{len(filtered_df)} object(s) match your filters.")
+
+    if filtered_df.empty:
+        st.warning("No objects match those filters yet. Try broadening the search.")
+        return
+
+    object_labels = {
+        row["objectID"]: f"{row.get('title', 'Untitled')} — {row.get('artistDisplayName', 'Unknown Artist')} ({row.get('objectDate', 'Date unavailable')})"
+        for _, row in filtered_df.iterrows()
+    }
+
+    selected_object_id = st.selectbox(
+        "Select object",
+        options=list(object_labels.keys()),
+        format_func=lambda oid: object_labels.get(oid, str(oid)),
+        label_visibility="collapsed",
+        key="met_object_selectbox",
+    )
+
+    selected_object = filtered_df[filtered_df["objectID"] == selected_object_id].iloc[0]
+    selected_image = selected_object.get("resolved_image_path")
+    is_active_context = st.session_state.get("selected_met_object_context_id") == selected_object_id
+    related_objects = get_related_met_objects(selected_object, limit=3)
+
+    details_col, preview_col = st.columns([1.25, 1.45], vertical_alignment="top")
+
+    with details_col:
+        title_text = str(selected_object.get("title", "Untitled")).strip()
+        artist_text = str(selected_object.get("artistDisplayName", "Unknown Artist")).strip()
+        date_text = str(selected_object.get("objectDate", "Date unavailable")).strip()
+        year_value = selected_object.get("object_year")
+        year_label = int(year_value) if pd.notna(year_value) else "Unknown"
+        object_url = str(selected_object.get("objectURL", "")).strip()
+        object_link = (
+            f'<a class="artist-link" href="{html.escape(object_url, quote=True)}" target="_blank" rel="noopener noreferrer">Open MET object page</a>'
+            if object_url and object_url.lower() != "nan"
+            else ""
+        )
+
+        st.markdown(
+            f"""
+            <div class="artist-hero-card">
+                <div class="artist-kicker">Museum Object</div>
+                <div class="artist-name">{html.escape(title_text)}</div>
+                <div class="artist-years">{html.escape(artist_text)} | {html.escape(date_text)}</div>
+                <div class="artist-statline">
+                    <strong>Object ID:</strong> {selected_object.get('objectID', 'Unknown')}<br/>
+                    <strong>Department:</strong> {html.escape(str(selected_object.get('department', 'Unknown department')))}<br/>
+                    <strong>Period:</strong> {html.escape(str(selected_object.get('period', 'Unknown')) or 'Unknown')}<br/>
+                    <strong>Culture:</strong> {html.escape(str(selected_object.get('culture', 'Unknown')) or 'Unknown')}<br/>
+                    <strong>Medium:</strong> {html.escape(str(selected_object.get('medium', 'Unknown medium')))}<br/>
+                    <strong>Dimensions:</strong> {html.escape(str(selected_object.get('dimensions', 'Dimensions unavailable')))}<br/>
+                    <strong>Object year:</strong> {year_label}
+                </div>
+                {object_link}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        action_col, clear_col = st.columns([1.4, 1], vertical_alignment="center")
+        with action_col:
+            button_label = "Using this object as reference" if is_active_context else "Use this object for image analysis"
+            if st.button(
+                button_label,
+                key=f"use_met_object_context_{selected_object_id}",
+                disabled=is_active_context,
+                use_container_width=True,
+            ):
+                st.session_state.selected_met_object_context_id = selected_object_id
+                st.rerun()
+
+        with clear_col:
+            if st.button(
+                "Clear reference",
+                key=f"clear_met_object_context_{selected_object_id}",
+                disabled=st.session_state.get("selected_met_object_context_id") is None,
+                use_container_width=True,
+            ):
+                st.session_state.selected_met_object_context_id = None
+                st.rerun()
+
+        if related_objects:
+            related_names = ", ".join(
+                f"{candidate.get('title', 'Untitled')} ({candidate.get('artistDisplayName', 'Unknown Artist')})"
+                for candidate in related_objects
+            )
+            st.caption(f"Nearby references in your dataset: {related_names}")
+
+    with preview_col:
+        if not selected_image:
+            st.info("No local preview found for this object in `met_art_data2/images_updated.zip`.")
+        else:
+            preview = load_met_thumbnail(selected_image, max_size=(440, 440))
+            if preview is not None:
+                st.image(preview, caption=title_text, **get_image_display_kwargs())
+            else:
+                st.info("The image file could not be opened locally.")
 
 
 def save_edited_message(index, edited_text):
@@ -1263,6 +2067,24 @@ def get_user_submission(disabled=False):
             f"{alternatives_text}"
         )
 
+    active_met_object = get_met_object_record_by_id(
+        st.session_state.get("selected_met_object_context_id")
+    )
+
+    if active_met_object is not None:
+        related_met_objects = get_related_met_objects(active_met_object, limit=3)
+        alternatives_text = (
+            " | Alternatives: "
+            + ", ".join(candidate.get("title", "Untitled") for candidate in related_met_objects)
+            if related_met_objects
+            else ""
+        )
+        st.info(
+            "Object analysis reference active: "
+            f"{active_met_object['title']} | {active_met_object['artistDisplayName']} | {active_met_object['department']}"
+            f"{alternatives_text}"
+        )
+
     with st.form("chat_with_image", clear_on_submit=True):
         st.markdown('<div class="composer-flag"></div>', unsafe_allow_html=True)
 
@@ -1297,17 +2119,33 @@ def get_user_submission(disabled=False):
 
 render_sidebar_audience_menu()
 
-with st.expander("Explore the most influential artists from around the world", expanded=False):
-    render_artist_browser()
+main_col, right_col = st.columns([5.1, 1.45], gap="large")
+messages_container = None
 
-# Contenedor principal del historial de chat con scroll.
-messages_container = st.container(
-    height=get_messages_container_height(len(st.session_state.messages)),
-    border=True,
-)
+with right_col:
+    selected_panel = render_right_navigation()
 
-for index, msg in enumerate(st.session_state.messages):
-    render_message(msg, index, container=messages_container)
+with main_col:
+    if selected_panel == "Chat Studio":
+        render_quick_start()
+        render_active_context_summary()
+
+        # Contenedor principal del historial de chat con scroll.
+        messages_container = st.container(
+            height=get_messages_container_height(len(st.session_state.messages)),
+            border=True,
+        )
+
+        for index, msg in enumerate(st.session_state.messages):
+            render_message(msg, index, container=messages_container)
+
+    elif selected_panel == "Artist Explorer":
+        st.caption("Browse artist profiles, preview works from your local dataset, and activate a reference for the chat.")
+        render_artist_browser()
+
+    elif selected_panel == "MET Object Explorer":
+        st.caption("Browse museum objects from your new dataset, inspect their metadata, and use them as grounded references.")
+        render_met_object_browser()
 
 
 def generate_assistant_reply(container):
@@ -1318,10 +2156,14 @@ def generate_assistant_reply(container):
         (message for message in reversed(st.session_state.messages) if message["role"] == "user"),
         None,
     )
-    if latest_user_message and latest_user_message.get("images"):
+    if latest_user_message is not None:
         artist_reference_message = build_artist_reference_message()
         if artist_reference_message is not None:
             conversation.append(artist_reference_message)
+
+        met_object_reference_message = build_met_object_reference_message()
+        if met_object_reference_message is not None:
+            conversation.append(met_object_reference_message)
 
     conversation.extend(build_model_message(message) for message in st.session_state.messages)
 
@@ -1337,33 +2179,34 @@ def generate_assistant_reply(container):
     st.session_state.messages.append({"role": "assistant", "content": response})
 
 
-# Si un mensaje anterior fue editado, regenera la respuesta una sola vez en el rerun.
-if st.session_state.pending_regeneration is not None:
-    st.session_state.pending_regeneration = None
-    generate_assistant_reply(messages_container)
+if selected_panel == "Chat Studio" and messages_container is not None:
+    # Si un mensaje anterior fue editado, regenera la respuesta una sola vez en el rerun.
+    if st.session_state.pending_regeneration is not None:
+        st.session_state.pending_regeneration = None
+        generate_assistant_reply(messages_container)
 
-# Desactiva nuevos envíos mientras la persona usuaria edita un mensaje anterior.
-submission = get_user_submission(
-    disabled=st.session_state.editing_message_index is not None
-)
-
-if submission:
-    # Guarda el nuevo turno del usuario en la misma estructura del historial.
-    user_message = {
-        "role": "user",
-        "content": submission["text"],
-        "images": serialize_uploaded_images(submission["files"]),
-    }
-
-    st.session_state.messages.append(user_message)
-    # Renderiza el mensaje recién enviado antes de iniciar el streaming de la respuesta.
-    render_message(
-        user_message,
-        len(st.session_state.messages) - 1,
-        container=messages_container,
+    # Desactiva nuevos envíos mientras la persona usuaria edita un mensaje anterior.
+    submission = get_user_submission(
+        disabled=st.session_state.editing_message_index is not None
     )
-    # Genera la respuesta del asistente usando el historial actualizado.
-    generate_assistant_reply(messages_container)
+
+    if submission:
+        # Guarda el nuevo turno del usuario en la misma estructura del historial.
+        user_message = {
+            "role": "user",
+            "content": submission["text"],
+            "images": serialize_uploaded_images(submission["files"]),
+        }
+
+        st.session_state.messages.append(user_message)
+        # Renderiza el mensaje recién enviado antes de iniciar el streaming de la respuesta.
+        render_message(
+            user_message,
+            len(st.session_state.messages) - 1,
+            container=messages_container,
+        )
+        # Genera la respuesta del asistente usando el historial actualizado.
+        generate_assistant_reply(messages_container)
 
 st.markdown(
     """
