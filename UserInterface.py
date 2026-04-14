@@ -51,7 +51,7 @@ model_google = "gemini-2.5-flash"
 
 # Imagen local usada como fondo de la aplicación.
 # Fondo principal de la interfaz.
-BACKGROUND_IMAGE_PATH = "/Users/andreavrob/Downloads/تسهيل العقيدة الاسلامية.jpeg"
+BACKGROUND_IMAGE_PATH = Path(__file__).resolve().parent / "assets" / "reflets_du_soir_echappee_belle.jpeg"
 AURA_LOGO_PATH = Path("/Users/andreavrob/Desktop/Aura.jpg")
 METADATA_CSV_PATH = Path(__file__).resolve().parent / "met_art_data2" / "metadata_cleaned_updated.csv"
 MET_IMAGES_ZIP_PATH = Path(__file__).resolve().parent / "met_art_data2" / "images_updated.zip"
@@ -664,6 +664,29 @@ css_background = """
     color: var(--text-main);
 }
 
+/* Let Streamlit select widgets use the full width of their columns so long labels are less likely to truncate. */
+.stApp [data-baseweb="select"] {
+    width: 100%;
+    min-width: 0;
+}
+
+.stApp [data-baseweb="select"] > div {
+    width: 100%;
+    min-width: 0;
+}
+
+.stApp [data-baseweb="select"] div[role="combobox"] {
+    min-width: 0;
+}
+
+.stApp [data-baseweb="select"] [class*="SingleValue"],
+.stApp [data-baseweb="select"] [class*="Placeholder"] {
+    max-width: 100% !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
 .composer-flag {
     display: none;
 }
@@ -869,7 +892,7 @@ css_background = """
 }
 
 .artist-browser-shell {
-    width: min(100%, 68rem);
+    width: min(100%, 78rem);
     margin: 0 auto 1.1rem auto;
     padding: 1rem 1rem 0.85rem;
     border-radius: 24px;
@@ -891,7 +914,7 @@ css_background = """
 }
 
 .met-browser-shell {
-    width: min(100%, 68rem);
+    width: min(100%, 78rem);
     margin: 0 auto 1.1rem auto;
     padding: 1rem 1rem 0.85rem;
     border-radius: 24px;
@@ -908,8 +931,17 @@ css_background = """
 }
 
 .met-browser-copy {
-    color: rgba(47, 63, 88, 0.78);
+    color: #4a3422;
+    text-align: center;
+    font-weight: 600;
     line-height: 1.45;
+}
+
+.section-caption-dark {
+    color: #4a3422;
+    font-weight: 600;
+    margin: 0.2rem 0 0.7rem 0;
+    text-align: center;
 }
 
 .quickstart-shell {
@@ -1090,6 +1122,12 @@ css_background = """
     color: #6a5d4f;
     padding-top: 0.7rem;
     border-top: 1px solid rgba(177, 135, 67, 0.14);
+}
+
+.right-rail-note-empty {
+    color: #4a3422;
+    text-align: center;
+    font-weight: 600;
 }
 
 /* Make selected radio controls feel lighter and more aligned with the Aura palette. */
@@ -1504,16 +1542,19 @@ def render_right_navigation():
     )
 
     note_parts = []
+    note_is_empty = False
     if active_artist is not None:
         note_parts.append(f"Artist active: {active_artist['name']}")
     if active_met_object is not None:
         note_parts.append(f"Object active: {active_met_object['title']}")
     if not note_parts:
         note_parts.append("No local reference active yet.")
+        note_is_empty = True
 
+    note_class = "right-rail-note right-rail-note-empty" if note_is_empty else "right-rail-note"
     st.markdown(
         f"""
-        <div class="right-rail-note">
+        <div class="{note_class}">
             {'<br/>'.join(note_parts)}
         </div>
         """,
@@ -1543,15 +1584,14 @@ def render_artist_browser():
         st.info("No pude cargar `met_art_data/Artists2.csv`.")
         return
 
-    filter_col, genre_col, nation_col = st.columns([2.1, 1.4, 1.3])
+    query = st.text_input(
+        "Search artists",
+        placeholder="Artist name or keyword from the bio",
+        label_visibility="collapsed",
+        key="artist_search_query",
+    ).strip().lower()
 
-    with filter_col:
-        query = st.text_input(
-            "Search artists",
-            placeholder="Artist name or keyword from the bio",
-            label_visibility="collapsed",
-            key="artist_search_query",
-        ).strip().lower()
+    genre_col, nation_col = st.columns([1.2, 1.2])
 
     with genre_col:
         genre_options = sorted(
@@ -1611,7 +1651,10 @@ def render_artist_browser():
         na_position="last",
     )
 
-    st.caption(f"{len(filtered_df)} artist(s) match your filters.")
+    st.markdown(
+        f'<div class="section-caption-dark">{len(filtered_df)} artist(s) match your filters.</div>',
+        unsafe_allow_html=True,
+    )
 
     if filtered_df.empty:
         st.warning("No artists match those filters yet. Try broadening the search.")
@@ -1690,7 +1733,10 @@ def render_artist_browser():
 
         if related_artists:
             related_names = ", ".join(candidate["name"] for candidate in related_artists)
-            st.caption(f"Nearby references in your dataset: {related_names}")
+            st.markdown(
+                f'<div class="section-caption-dark">Nearby references in your dataset: {related_names}</div>',
+                unsafe_allow_html=True,
+            )
 
     with gallery_col:
         if not artist_images:
@@ -1725,15 +1771,14 @@ def render_met_object_browser():
         st.info("No pude cargar `met_art_data2/metadata_cleaned_updated.csv`.")
         return
 
-    query_col, dept_col, period_col, role_col = st.columns([2.2, 1.2, 1.2, 1.1])
+    query = st.text_input(
+        "Search works",
+        placeholder="Title, artist, medium, culture, or department",
+        label_visibility="collapsed",
+        key="met_search_query",
+    ).strip().lower()
 
-    with query_col:
-        query = st.text_input(
-            "Search works",
-            placeholder="Title, artist, medium, culture, or department",
-            label_visibility="collapsed",
-            key="met_search_query",
-        ).strip().lower()
+    dept_col, period_col, role_col = st.columns([1.2, 1.2, 1.0])
 
     with dept_col:
         department_options = sorted(
@@ -1805,17 +1850,20 @@ def render_met_object_browser():
         year_min = int(year_values.min())
         year_max = min(int(year_values.max()), 2026)
         year_min = min(year_min, year_max)
-        year_range = st.slider(
-            "Object year",
-            min_value=year_min,
-            max_value=year_max,
-            value=(year_min, year_max),
-            key="met_year_range",
-        )
-        filtered_df = filtered_df[
-            filtered_df["object_year"].isna()
-            | filtered_df["object_year"].between(year_range[0], year_range[1])
-        ]
+        if year_min < year_max:
+            year_range = st.slider(
+                "Object year",
+                min_value=year_min,
+                max_value=year_max,
+                value=(year_min, year_max),
+                key="met_year_range",
+            )
+            filtered_df = filtered_df[
+                filtered_df["object_year"].isna()
+                | filtered_df["object_year"].between(year_range[0], year_range[1])
+            ]
+        else:
+            st.caption(f"Object year: {year_min}")
 
     filtered_df = filtered_df.sort_values(
         by=["object_year", "department", "artistDisplayName", "title"],
@@ -1823,7 +1871,10 @@ def render_met_object_browser():
         na_position="last",
     )
 
-    st.caption(f"{len(filtered_df)} object(s) match your filters.")
+    st.markdown(
+        f'<div class="section-caption-dark">{len(filtered_df)} object(s) match your filters.</div>',
+        unsafe_allow_html=True,
+    )
 
     if filtered_df.empty:
         st.warning("No objects match those filters yet. Try broadening the search.")
@@ -1910,7 +1961,10 @@ def render_met_object_browser():
                 f"{candidate.get('title', 'Untitled')} ({candidate.get('artistDisplayName', 'Unknown Artist')})"
                 for candidate in related_objects
             )
-            st.caption(f"Nearby references in your dataset: {related_names}")
+            st.markdown(
+                f'<div class="section-caption-dark">Nearby references in your dataset: {related_names}</div>',
+                unsafe_allow_html=True,
+            )
 
     with preview_col:
         if not selected_image:
@@ -2140,11 +2194,17 @@ with main_col:
             render_message(msg, index, container=messages_container)
 
     elif selected_panel == "Artist Explorer":
-        st.caption("Browse artist profiles, preview works from your local dataset, and activate a reference for the chat.")
+        st.markdown(
+            '<div class="section-caption-dark">Browse artist profiles, preview works from your local dataset, and activate a reference for the chat.</div>',
+            unsafe_allow_html=True,
+        )
         render_artist_browser()
 
     elif selected_panel == "MET Object Explorer":
-        st.caption("Browse museum objects from your new dataset, inspect their metadata, and use them as grounded references.")
+        st.markdown(
+            '<div class="section-caption-dark">Browse museum objects from your new dataset, inspect their metadata, and use them as grounded references.</div>',
+            unsafe_allow_html=True,
+        )
         render_met_object_browser()
 
 
