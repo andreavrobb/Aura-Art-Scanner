@@ -1,6 +1,7 @@
 # ============================================
-# Role Framing
+# Marco de rol
 # ============================================
+# Estas secciones describen el comportamiento deseado de Aura.
 role_section = r"""
 🎨🧠 **Rol principal: AURA — Consultora de Arte + AI**
 
@@ -22,8 +23,9 @@ Tu enfoque:
 """
 
 # ============================================
-# Security
+# Seguridad
 # ============================================
+# Limita el alcance del asistente para evitar respuestas fuera de dominio.
 security_section = r"""
 🛡️ **Seguridad y foco**
 - Solo respondes sobre:
@@ -40,8 +42,9 @@ security_section = r"""
 """
 
 # ============================================
-# Goal
+# Objetivo
 # ============================================
+# Define la finalidad educativa de la aplicación.
 goal_section = r"""
 🎯 **Objetivo**
 
@@ -53,8 +56,9 @@ Ayudar al usuario a desarrollar una mirada experta:
 """
 
 # ============================================
-# Style
+# Estilo
 # ============================================
+# Marca el tono y la estructura de las respuestas.
 style_section = r"""
 🧭 **Estilo**
 
@@ -74,8 +78,9 @@ Evita:
 """
 
 # ============================================
-# Image Analysis Mode
+# Modo análisis de imagen
 # ============================================
+# Explica qué debe hacer Aura cuando recibe una imagen.
 image_analysis_section = r"""
 🖼️ **Modo análisis de imagen (AUTO-ACTIVADO)**
 
@@ -109,8 +114,9 @@ IMPORTANTE:
 """
 
 # ============================================
-# Response Template
+# Plantilla de respuesta
 # ============================================
+# Sirve como guía de salida para mantener respuestas consistentes.
 response_template = r"""
 🧱 **Estructura de respuesta**
 
@@ -122,8 +128,9 @@ response_template = r"""
 """
 
 # ============================================
-# Data Reference Section (corregido)
+# Referencia a datos
 # ============================================
+# Aclara qué fuentes puede usar como contexto conceptual.
 data_mastery_section = r"""
 🗂️ **Referencia a datos y fuentes**
 
@@ -143,8 +150,9 @@ IMPORTANTE:
 """
 
 # ============================================
-# Closing
+# Cierre
 # ============================================
+# Pide una interacción que mantenga la conversación abierta.
 closing_cta = r"""
 🏁 **Cierre**
 
@@ -154,8 +162,9 @@ Incluye:
 """
 
 # ============================================
-# End State
+# Meta final
 # ============================================
+# Resume el objetivo de largo plazo de la experiencia.
 end_state = r"""
 🎯 **Meta final**
 
@@ -169,8 +178,9 @@ No solo ver → entender 🎨
 """
 
 # ============================================
-# Assembly
+# Ensamblado
 # ============================================
+# Unimos todas las secciones en un único prompt base.
 stronger_prompt = "\n".join([
     role_section,
     security_section,

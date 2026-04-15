@@ -1,13 +1,22 @@
+"""Extrae obras del MET y guarda metadatos e imágenes locales.
+
+Este script consulta la API pública del MET, filtra artistas no deseados,
+descarga imágenes principales y construye un dataset local con:
+- metadatos en Excel,
+- imágenes descargadas a disco,
+- y un contador por artista para nombrar archivos de forma consistente.
+"""
+
 import requests
 import json
 import pandas as pd
 import os
 import time
 import re
-from collections import defaultdict # Para contar las imágenes por artista
+from collections import defaultdict  # Lleva el conteo de imágenes por artista.
 
 # --- 1. Configuración ---
-# Lista de artistas a OMITIR (normalizamos a minúsculas para una comparación robusta)
+# Lista de artistas a omitir. Se normaliza a minúsculas para comparar de forma robusta.
 OMIT_ARTISTS = {
     "amedeo modigliani", "vasiliy kandinskiy", "diego rivera", "claude monet", 
     "rene magritte", "salvador dali", "edouard manet", "andrei rublev", 
@@ -24,28 +33,25 @@ OMIT_ARTISTS = {
     "jackson pollock", "konstantinos grammatopoulos", "kiyohara yukinobu"
 }
 
-# Rutas de salida
+# Rutas de salida donde se almacenan metadata e imágenes.
 OUTPUT_DIR = "met_art_data"
 IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
 METADATA_FILE = os.path.join(OUTPUT_DIR, "metadata.xlsx")
 
-# URL base de la API del MET
+# URL base de la API del MET.
 MET_COLLECTION_API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 
-# Aseguramos que los directorios existan
+# Nos aseguramos de que las carpetas de salida existan antes de guardar archivos.
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# Diccionario para llevar la cuenta de imágenes por artista
-# La clave será el nombre sanitizado del artista, el valor será el contador
+# Diccionario para llevar la cuenta de imágenes por artista.
+# La clave es el nombre sanitizado del artista y el valor es su contador.
 artist_image_counts = defaultdict(int)
 
 # --- 2. Funciones de Ayuda ---
 
 def sanitize_filename(name):
-    """
-    Sanitiza una cadena para ser usada como nombre de archivo.
-    Reemplaza espacios con guiones bajos y elimina caracteres no válidos.
-    """
+    """Convierte un nombre en una cadena segura para usarla como archivo."""
     if not name:
         return ""
     # Reemplaza espacios con guiones bajos
@@ -57,15 +63,13 @@ def sanitize_filename(name):
     return sanitized[:100] # Limitar longitud para evitar nombres de archivo excesivamente largos
 
 def get_object_ids(query="painting", has_images=True, top_n=500):
-    """
-    Busca IDs de objetos en la API del MET.
-    """
+    """Busca objectIDs en la API del MET usando una consulta dada."""
     search_url = f"{MET_COLLECTION_API_BASE}/search"
     params = {"q": query}
     if has_images:
         params["hasImages"] = True
 
-    print(f"Buscando objectIDs para la consulta: '{query}' (con imágenes={has_images})...")
+        print(f"Buscando objectIDs para la consulta: '{query}' (con imágenes={has_images})...")
     try:
         response = requests.get(search_url, params=params)
         response.raise_for_status() 
@@ -81,9 +85,7 @@ def get_object_ids(query="painting", has_images=True, top_n=500):
         return []
 
 def get_object_details(object_id):
-    """
-    Obtiene los detalles completos de un objeto por su ID.
-    """
+    """Obtiene la ficha completa de una obra a partir de su objectID."""
     object_url = f"{MET_COLLECTION_API_BASE}/objects/{object_id}"
     try:
         response = requests.get(object_url)
@@ -94,9 +96,7 @@ def get_object_details(object_id):
         return None
 
 def download_image(image_url, object_id, artist_display_name, folder_path, artist_counts_dict):
-    """
-    Descarga una imagen y la guarda con un nombre basado en el artista y un contador.
-    """
+    """Descarga una imagen y la guarda usando un nombre derivado del artista."""
     if not image_url:
         return None
 
@@ -104,7 +104,7 @@ def download_image(image_url, object_id, artist_display_name, folder_path, artis
         response = requests.get(image_url, stream=True)
         response.raise_for_status()
 
-        # Determinar la extensión del archivo
+        # Determinamos la extensión según el content-type recibido.
         content_type = response.headers.get('content-type', '').lower()
         if 'jpeg' in content_type or 'jpg' in content_type:
             ext = 'jpg'
@@ -115,16 +115,16 @@ def download_image(image_url, object_id, artist_display_name, folder_path, artis
             # Podrías añadir más lógica aquí para otros tipos o ignorar
             ext = 'jpg' 
 
-        # Generar nombre de archivo
+        # Construimos un nombre de archivo estable y legible.
         sanitized_artist_name = sanitize_filename(artist_display_name)
 
         if sanitized_artist_name:
-            # Incrementar el contador para este artista
+            # Incrementamos el contador por artista para evitar colisiones.
             artist_counts_dict[sanitized_artist_name] += 1
             count = artist_counts_dict[sanitized_artist_name]
             filename = f"{sanitized_artist_name}_{count}.{ext}"
         else:
-            # Fallback si no hay nombre de artista válido
+            # Si no hay artista válido, usamos un nombre de respaldo con objectID.
             filename = f"unknown_artist_{object_id}.{ext}" # Usa objectID para unicidad
             print(f"  Advertencia: No se pudo usar nombre de artista para {object_id}. Usando '{filename}'")
 
@@ -141,9 +141,7 @@ def download_image(image_url, object_id, artist_display_name, folder_path, artis
 # --- 3. Proceso Principal ---
 
 def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_seconds=0.1):
-    """
-    Coordina la extracción, filtrado, descarga y guardado de datos de arte.
-    """
+    """Orquesta la descarga de metadatos e imágenes del MET."""
     all_art_metadata = [] 
 
     object_ids = get_object_ids(query=query, has_images=True, top_n=max_objects_to_fetch)
@@ -161,7 +159,7 @@ def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_
         if details:
             artist_name_raw = details.get("artistDisplayName", "").strip()
 
-            # Normalizar el nombre del artista para la comparación con OMIT_ARTISTS
+            # Normalizamos el nombre del artista para compararlo con la lista de omitidos.
             normalized_artist_name_for_filter = artist_name_raw.lower()
 
             if normalized_artist_name_for_filter in OMIT_ARTISTS:
@@ -171,7 +169,7 @@ def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_
             metadata = {
                 "objectID": object_id,
                 "title": details.get("title"),
-                "artistDisplayName": artist_name_raw, # Mantener el nombre original para el Excel
+                "artistDisplayName": artist_name_raw,
                 "artistRole": details.get("artistRole"),
                 "objectDate": details.get("objectDate"),
                 "period": details.get("period"),
@@ -188,7 +186,7 @@ def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_
             primary_image_url = metadata["primaryImage"]
             if primary_image_url:
                 print(f"  Descargando imagen para {object_id}...")
-                # Pasamos el nombre del artista y el diccionario de contadores
+                # Guardamos la imagen usando el contador por artista.
                 image_filename = download_image(primary_image_url, object_id, artist_name_raw, IMAGES_DIR, artist_image_counts)
                 if image_filename:
                     metadata["localImageFileName"] = image_filename 
@@ -200,9 +198,11 @@ def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_
 
             all_art_metadata.append(metadata) 
 
+        # Pequeña pausa para no saturar la API.
         time.sleep(delay_seconds) 
 
     if all_art_metadata:
+        # Convertimos la lista de diccionarios en una tabla y la exportamos a Excel.
         df = pd.DataFrame(all_art_metadata)
         df.to_excel(METADATA_FILE, index=False)
         print(f"\n--- Extracción y guardado completados ---")
@@ -213,5 +213,5 @@ def extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_
 
 # --- Ejecución Principal ---
 if __name__ == "__main__":
-    # Puedes ajustar la consulta y el número de objetos
+    # Entrada principal del script cuando se ejecuta de forma directa.
     extract_and_save_art_data(query="painting", max_objects_to_fetch=500, delay_seconds=0.1)

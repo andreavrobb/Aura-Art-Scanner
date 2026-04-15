@@ -17,6 +17,7 @@ y paneles translúcidos para mejorar la legibilidad.
 import base64
 import html
 import inspect
+import json
 import os
 import re
 import shutil
@@ -27,6 +28,7 @@ import pandas as pd
 from PIL import Image
 from dotenv import load_dotenv
 from openai import OpenAI
+import requests
 import streamlit as st
 
 from prompts import stronger_prompt
@@ -58,6 +60,12 @@ MET_IMAGES_ZIP_PATH = Path(__file__).resolve().parent / "met_art_data2" / "image
 MET_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data2" / "images_extracted"
 ARTISTS_CSV_PATH = Path(__file__).resolve().parent / "met_art_data" / "Artists2.csv"
 ARTIST_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data" / "resized 3"
+MET_PUBLIC_API_BASE_URL = "https://collectionapi.metmuseum.org/public/collection/v1"
+AIC_API_BASE_URL = "https://api.artic.edu/api/v1"
+CMA_API_BASE_URL = "https://openaccess-api.clevelandart.org/api"
+SIMILAR_WEB_MATCH_LIMIT = 4
+SIMILAR_WEB_SEARCH_TIMEOUT = 12
+AIC_USER_AGENT = "aura-art-scanner (local-app)"
 
 # Menú interactivo que se visualiza en la parte izquierda de la interfaz
 AUDIENCE_PROFILES = [
@@ -1227,6 +1235,45 @@ css_background = """
     text-decoration: none;
 }
 
+.online-match-shell {
+    margin-top: 1rem;
+    margin-bottom: 0.85rem;
+    padding: 0.9rem 1rem 0.8rem;
+    border-radius: 20px;
+    background: rgba(255, 249, 241, 0.9);
+    border: 1px solid rgba(177, 135, 67, 0.16);
+}
+
+.online-match-title {
+    font-size: 1rem;
+    font-weight: 800;
+    color: #4a3422;
+    text-align: center;
+    margin-bottom: 0.18rem;
+}
+
+.online-match-copy {
+    font-size: 0.9rem;
+    line-height: 1.45;
+    color: #6a5240;
+    text-align: center;
+}
+
+.online-match-card {
+    margin-top: 0.45rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem 0.8rem;
+    border-radius: 18px;
+    background: rgba(255, 252, 247, 0.88);
+    border: 1px solid rgba(177, 135, 67, 0.14);
+}
+
+.online-match-meta {
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: #4a3422;
+}
+
 .app-signature {
     position: fixed;
     right: 1.15rem;
@@ -1251,9 +1298,10 @@ css_background = """
 </style>
 """.replace("BACKGROUND_LAYERS_VALUE", background_layers)
 
-# Inyecta CSS directamente en la página para personalizar la interfaz.
+# Inyectamos el CSS generado en la página para que la app tenga su estilo completo al cargar.
 st.markdown(css_background, unsafe_allow_html=True)
 
+# Cabecera visual fija de la app: logo y subtítulo.
 st.markdown(
     f"""<div class="page-top-spacer"></div>
     <div class="hero-shell">
@@ -1270,7 +1318,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Formatos de imagen aceptados en el compositor del chat.
+# Tipos de archivo permitidos en el chat con imágenes.
 SUPPORTED_IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 
 
@@ -1278,7 +1326,7 @@ SUPPORTED_IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 # Estado de sesión
 # --------------------------------------------
 if "messages" not in st.session_state:
-    # Los mensajes se guardan como diccionarios con "role", "content" y "images" opcional.
+    # La conversación empieza con un mensaje guía del asistente.
     st.session_state.messages = [{"role": "assistant", "content": "Upload an image to uncover its artistic style, influences, and connections. Tell me your name to personalize your experience."}]
 
 if "editing_message_index" not in st.session_state:
@@ -1310,6 +1358,7 @@ def serialize_uploaded_images(uploaded_files):
     - los bytes crudos para renderizarla en Streamlit,
     - y una data URL en base64 para enviarla al modelo multimodal.
     """
+    # Guardamos los archivos como bytes y como data URL para reutilizarlos en UI y en el modelo.
     images = []
 
     for uploaded_file in uploaded_files or []:
@@ -1335,6 +1384,7 @@ def get_image_display_kwargs():
     Las versiones nuevas prefieren ``width="stretch"``, mientras que las más
     antiguas todavía usan ``use_column_width=True``.
     """
+    # Streamlit cambia la API de imágenes entre versiones; detectamos qué opción soporta.
     image_signature = inspect.signature(st.image)
 
     if "use_container_width" in image_signature.parameters:
@@ -1346,14 +1396,128 @@ def get_image_display_kwargs():
     return {}
 
 
+def normalize_text_list(values, limit=6):
+    """Normaliza una lista de strings cortos para usarla en UI o búsquedas."""
+    # Quitamos duplicados, espacios sobrantes y limitamos el número de elementos.
+    normalized = []
+
+    for value in values or []:
+        text = str(value).strip()
+        if not text:
+            continue
+        if text.lower() in {item.lower() for item in normalized}:
+            continue
+        normalized.append(text)
+        if len(normalized) >= limit:
+            break
+
+    return normalized
+
+
 def render_images(message):
     """Renderiza todas las imágenes adjuntas a un mismo mensaje de chat."""
+    # Cada imagen del mensaje se pinta en orden para conservar el contexto original.
     for image in message.get("images", []):
         st.image(
             image["bytes"],
             caption=image["name"],
             **get_image_display_kwargs(),
         )
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 8)
+def fetch_remote_image_bytes(image_url, source_name=""):
+    """Descarga una miniatura remota para mostrarla en Streamlit sin depender del navegador."""
+    if not image_url:
+        return None
+
+    # Añadimos cabeceras básicas para evitar bloqueos por hotlinking en algunas fuentes.
+    headers = {
+        "User-Agent": AIC_USER_AGENT,
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+    if source_name == "Art Institute of Chicago API":
+        headers["AIC-User-Agent"] = AIC_USER_AGENT
+
+    try:
+        response = requests.get(
+            image_url,
+            headers=headers,
+            timeout=SIMILAR_WEB_SEARCH_TIMEOUT,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return None
+
+    content_type = response.headers.get("content-type", "").lower()
+    if "image" not in content_type and not response.content:
+        return None
+
+    return response.content
+
+
+def render_online_matches(message):
+    """Muestra una galería compacta con coincidencias encontradas en la web."""
+    online_matches = message.get("online_matches") or []
+    if not online_matches:
+        return
+
+    # Creamos un resumen de procedencia para que el usuario entienda de dónde vienen los resultados.
+    source_labels = normalize_text_list(
+        [match.get("source_name", "Online collection") for match in online_matches],
+        limit=6,
+    )
+    source_summary = ", ".join(source_labels)
+
+    st.markdown(
+        f"""
+        <div class="online-match-shell">
+            <div class="online-match-title">Similar Works Found Online</div>
+            <div class="online-match-copy">
+                Possible visual matches from {html.escape(source_summary)}. Treat them as references, not definitive attributions.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Repartimos la galería en dos columnas para mantenerla compacta y legible.
+    gallery_cols = st.columns(2)
+    for index, match in enumerate(online_matches):
+        with gallery_cols[index % 2]:
+            # Intentamos usar bytes descargados; si no existen, los obtenemos en tiempo de render.
+            image_url = match.get("image_url")
+            image_bytes = match.get("image_bytes")
+            if image_url and image_bytes is None:
+                image_bytes = fetch_remote_image_bytes(
+                    image_url,
+                    source_name=str(match.get("source_name", "")),
+                )
+
+            if image_bytes:
+                st.image(image_bytes, caption=match.get("title", "Untitled"), **get_image_display_kwargs())
+            else:
+                st.caption("Preview image unavailable for this source.")
+
+            creator = match.get("creator", "Unknown artist")
+            period = match.get("period", "Period unavailable")
+            source_url = match.get("source_url", "")
+
+            st.markdown(
+                f"""
+                <div class="online-match-card">
+                    <div class="online-match-meta"><strong>Author:</strong> {html.escape(str(creator))}</div>
+                    <div class="online-match-meta"><strong>Period:</strong> {html.escape(str(period))}</div>
+                    <div class="online-match-meta"><strong>Source:</strong> {html.escape(str(match.get("source_name", "Online collection")))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if source_url:
+                st.markdown(
+                    f'[Open source page]({html.escape(source_url, quote=True)})'
+                )
 
 
 def render_role_marker(role):
@@ -1382,6 +1546,7 @@ def render_role_marker(role):
 def render_sidebar_audience_menu():
     """Renderiza un menú lateral curado con perfiles a quienes puede interesar el arte."""
     with st.sidebar:
+        # La barra lateral resume el propósito de la app y ofrece perfiles de uso.
         st.markdown("## Start Here")
         st.caption("Aura helps you explore art, compare references, and analyze uploaded images with guided context.")
 
@@ -1432,6 +1597,7 @@ def render_sidebar_audience_menu():
 
 def render_quick_start():
     """Muestra una guía breve para entender la app de un vistazo."""
+    # Bloque de entrada para que el usuario entienda Aura sin leer documentación externa.
     st.markdown(
         """
         <div class="quickstart-shell">
@@ -1469,6 +1635,7 @@ def render_active_context_summary():
         st.session_state.get("selected_met_object_context_id")
     )
 
+    # Si no hay contexto local activo, se informa explícitamente y terminamos.
     if active_artist is None and active_met_object is None:
         st.markdown(
             """
@@ -1524,6 +1691,7 @@ def render_right_navigation():
         unsafe_allow_html=True,
     )
 
+    # El radio define qué workspace se muestra en el área principal.
     selected_panel = st.radio(
         "Navigate Aura",
         options=["Chat Studio", "Artist Explorer", "MET Object Explorer"],
@@ -1541,6 +1709,7 @@ def render_right_navigation():
         st.session_state.get("selected_met_object_context_id")
     )
 
+    # Resumen compacto del contexto activo para la navegación.
     note_parts = []
     note_is_empty = False
     if active_artist is not None:
@@ -1624,6 +1793,7 @@ def render_artist_browser():
             key="artist_nationalities",
         )
 
+    # Partimos del dataset completo y reducimos por búsqueda/filtros.
     filtered_df = artists_df.copy()
 
     if query:
@@ -1660,6 +1830,7 @@ def render_artist_browser():
         st.warning("No artists match those filters yet. Try broadening the search.")
         return
 
+    # El selectbox se alimenta con los nombres ya filtrados.
     artist_names = filtered_df["name"].tolist()
     default_name = artist_names[0]
 
@@ -1819,6 +1990,7 @@ def render_met_object_browser():
             key="met_roles",
         )
 
+    # Aplicamos los filtros de texto, categoría y año sobre una copia del dataset.
     filtered_df = met_df.copy()
 
     if query:
@@ -1880,6 +2052,7 @@ def render_met_object_browser():
         st.warning("No objects match those filters yet. Try broadening the search.")
         return
 
+    # Etiquetas largas para que el usuario identifique rápidamente cada obra.
     object_labels = {
         row["objectID"]: f"{row.get('title', 'Untitled')} — {row.get('artistDisplayName', 'Unknown Artist')} ({row.get('objectDate', 'Date unavailable')})"
         for _, row in filtered_df.iterrows()
@@ -1978,12 +2151,13 @@ def render_met_object_browser():
 
 
 def save_edited_message(index, edited_text):
-    """Guarda un mensaje editado por la persona usuaria y activa la regeneración.
+    """Guarda un mensaje editado y activa la regeneración de la respuesta.
 
-    Cuando se edita un prompt anterior, la conversación posterior deja de ser
-    totalmente coherente. Por eso, el historial se recorta hasta el mensaje
-    editado y la respuesta del asistente se genera de nuevo desde ese punto.
+    Cuando se modifica un mensaje anterior, el resto del historial puede dejar
+    de ser coherente. Por eso se recorta la conversación hasta ese punto y se
+    vuelve a generar la respuesta del asistente desde ahí.
     """
+    # Recuperamos el mensaje original antes de reemplazarlo.
     current_message = st.session_state.messages[index]
     normalized_text = edited_text.strip()
 
@@ -1992,15 +2166,632 @@ def save_edited_message(index, edited_text):
         return
 
     current_message["content"] = normalized_text
-    # Elimina los mensajes posteriores para que la nueva respuesta sea coherente.
+    # Cortamos el historial posterior para que la regeneración parta desde un estado consistente.
     st.session_state.messages = st.session_state.messages[: index + 1]
     st.session_state.editing_message_index = None
     st.session_state.pending_regeneration = index
     st.rerun()
 
 
+def extract_json_object(raw_text):
+    """Intenta recuperar un objeto JSON incluso si el modelo lo envuelve en fences."""
+    if not raw_text:
+        return None
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Si el modelo añadió texto alrededor, intentamos extraer el primer bloque JSON.
+    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def build_similar_art_search_queries(search_hints, fallback_text=""):
+    """Construye varias consultas cortas para recuperar obras similares en la web."""
+    queries = []
+    artists = normalize_text_list(search_hints.get("likely_artists", []), limit=3)
+    terms = normalize_text_list(search_hints.get("search_terms", []), limit=6)
+    style = str(search_hints.get("likely_style", "")).strip()
+    period = str(search_hints.get("likely_period", "")).strip()
+    object_type = str(search_hints.get("object_type", "")).strip()
+    material_terms = normalize_text_list(search_hints.get("material_terms", []), limit=4)
+
+    # Empezamos por combinaciones centradas en artista, tipo de objeto y estilo.
+    if artists:
+        queries.append(" ".join(part for part in [artists[0], object_type, style] if part))
+        queries.append(" ".join(part for part in [artists[0]] + material_terms[:2] if part))
+
+    if object_type and artists:
+        queries.append(" ".join(part for part in [artists[0], object_type, period] if part))
+
+    if style and terms:
+        queries.append(" ".join([style, object_type] + terms[:2]).strip())
+
+    if period and terms:
+        queries.append(" ".join([period, object_type] + terms[:2]).strip())
+
+    if terms:
+        queries.append(" ".join(([object_type] if object_type else []) + terms[:4]).strip())
+
+    fallback_text = re.sub(r"\s+", " ", str(fallback_text)).strip()
+    # Si todo lo demás falla, reutilizamos el texto libre del usuario como respaldo.
+    if fallback_text:
+        queries.append(fallback_text[:120])
+
+    deduped = []
+    seen = set()
+    for query in queries:
+        normalized = query.strip()
+        key = normalized.lower()
+        if not normalized or key in seen:
+            continue
+        deduped.append(normalized)
+        seen.add(key)
+        if len(deduped) >= 4:
+            break
+
+    return deduped
+
+
+def normalize_object_type(value):
+    """Reduce tipos de obra a unas pocas familias comparables entre APIs."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+
+    mapping = {
+        "painting": ["painting", "oil", "canvas", "tempera", "panel"],
+        "sculpture": ["sculpture", "statue", "bronze", "marble", "stone", "carving", "statuette"],
+        "drawing": ["drawing", "sketch", "graphite", "chalk", "ink drawing"],
+        "print": ["print", "etching", "engraving", "lithograph", "woodcut", "screenprint"],
+        "ceramic": ["ceramic", "pottery", "vase", "porcelain", "earthenware", "stoneware", "terracotta"],
+        "textile": ["textile", "tapestry", "fabric", "weaving", "embroidery"],
+        "photograph": ["photograph", "photo", "albumen", "gelatin silver"],
+        "decorative object": ["utensil", "vessel", "bowl", "cup", "plate", "furniture", "decorative", "object"],
+    }
+
+    # Traducimos descripciones libres a categorías más estables entre fuentes.
+    for canonical, keywords in mapping.items():
+        if any(keyword in text for keyword in keywords):
+            return canonical
+
+    return text
+
+
+def build_match_haystack(match):
+    """Reune metadata textual de una coincidencia para scoring y filtros."""
+    return " ".join(
+        [
+            str(match.get("title", "")),
+            str(match.get("creator", "")),
+            str(match.get("period", "")),
+            str(match.get("department", "")),
+            str(match.get("medium", "")),
+            str(match.get("culture", "")),
+            str(match.get("object_type", "")),
+        ]
+    ).lower()
+
+
+def same_artist_match(match, search_hints):
+    """Detecta coincidencia por artista de forma tolerante."""
+    creator = str(match.get("creator", "")).strip().lower()
+    if not creator or creator == "unknown artist":
+        return False
+
+    primary_artist = str(search_hints.get("primary_artist", "")).strip().lower()
+    likely_artists = [artist.lower() for artist in search_hints.get("likely_artists", [])]
+    artist_candidates = [artist for artist in [primary_artist] + likely_artists if artist]
+
+    # Permitimos coincidencias parciales porque cada API escribe el autor de forma distinta.
+    for artist in artist_candidates:
+        if artist == creator or artist in creator or creator in artist:
+            return True
+
+    return False
+
+
+def score_online_match(match, search_hints):
+    """Asigna una puntuación simple a una coincidencia según pistas del modelo."""
+    artists = [artist.lower() for artist in search_hints.get("likely_artists", [])]
+    style = str(search_hints.get("likely_style", "")).lower()
+    period = str(search_hints.get("likely_period", "")).lower()
+    terms = [term.lower() for term in search_hints.get("search_terms", [])]
+    material_terms = [term.lower() for term in search_hints.get("material_terms", [])]
+    expected_object_type = normalize_object_type(search_hints.get("object_type", ""))
+    match_object_type = normalize_object_type(match.get("object_type", ""))
+
+    haystack = build_match_haystack(match)
+
+    # El mismo artista pesa más que cualquier otra señal.
+    score = 0
+    if same_artist_match(match, search_hints):
+        score += 12
+    elif artists and any(artist in haystack for artist in artists):
+        score += 5
+    if expected_object_type and match_object_type == expected_object_type:
+        score += 7
+    elif expected_object_type and expected_object_type in haystack:
+        score += 3
+    if style and style in haystack:
+        score += 3
+    if period and period in haystack:
+        score += 2
+    score += sum(2 for term in material_terms if term in haystack)
+    score += sum(1 for term in terms if term in haystack)
+    return score
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 8)
+def search_met_collection_online(query, has_images=True):
+    """Busca IDs de objetos en la API pública del Met."""
+    if not query:
+        return []
+
+    try:
+        response = requests.get(
+            f"{MET_PUBLIC_API_BASE_URL}/search",
+            params={
+                "q": query,
+                "hasImages": str(bool(has_images)).lower(),
+            },
+            timeout=SIMILAR_WEB_SEARCH_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return []
+
+    # Devolvemos solo IDs enteros válidos para las siguientes llamadas.
+    object_ids = payload.get("objectIDs") or []
+    return [object_id for object_id in object_ids if isinstance(object_id, int)]
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 8)
+def fetch_met_object_online(object_id):
+    """Recupera metadata de un objeto del Met desde la API pública."""
+    try:
+        response = requests.get(
+            f"{MET_PUBLIC_API_BASE_URL}/objects/{object_id}",
+            timeout=SIMILAR_WEB_SEARCH_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    # Preferimos la miniatura pequeña, pero caemos a la imagen principal si hace falta.
+    image_url = payload.get("primaryImageSmall") or payload.get("primaryImage")
+    if not image_url:
+        return None
+
+    title = str(payload.get("title", "")).strip()
+    if not title:
+        return None
+
+    creator = str(payload.get("artistDisplayName", "")).strip() or "Unknown artist"
+    period = (
+        str(payload.get("objectDate", "")).strip()
+        or str(payload.get("period", "")).strip()
+        or str(payload.get("culture", "")).strip()
+        or "Period unavailable"
+    )
+
+    return {
+        "object_id": object_id,
+        "title": title,
+        "creator": creator,
+        "period": period,
+        "image_url": image_url,
+        "source_url": str(payload.get("objectURL", "")).strip(),
+        "source_name": "The Met Collection API",
+        "department": str(payload.get("department", "")).strip(),
+        "medium": str(payload.get("medium", "")).strip(),
+        "culture": str(payload.get("culture", "")).strip(),
+        "object_type": normalize_object_type(
+            payload.get("classification")
+            or payload.get("objectName")
+            or payload.get("medium")
+            or ""
+        ),
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 8)
+def search_aic_collection_online(query, limit=8):
+    """Busca obras en la API del Art Institute of Chicago."""
+    if not query:
+        return []
+
+    try:
+        response = requests.get(
+            f"{AIC_API_BASE_URL}/artworks/search",
+            params={
+                "q": query,
+                "limit": limit,
+                "fields": ",".join(
+                    [
+                        "id",
+                        "title",
+                        "artist_title",
+                        "date_display",
+                        "image_id",
+                        "artwork_type_title",
+                        "medium_display",
+                        "classification_title",
+                        "thumbnail",
+                        "api_link",
+                    ]
+                ),
+            },
+            headers={"AIC-User-Agent": AIC_USER_AGENT},
+            timeout=SIMILAR_WEB_SEARCH_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return []
+
+    iiif_url = ""
+    config = payload.get("config") or {}
+    iiif_url = str(config.get("iiif_url", "")).strip()
+    website_url = str(config.get("website_url", "https://www.artic.edu")).strip()
+    results = []
+
+    # Reconstruimos URLs IIIF y normalizamos metadatos para que encajen con el resto del pipeline.
+    for item in payload.get("data") or []:
+        title = str(item.get("title", "")).strip()
+        image_id = str(item.get("image_id", "")).strip()
+        if not title or not image_id:
+            continue
+
+        image_url = f"{iiif_url}/{image_id}/full/843,/0/default.jpg" if iiif_url else ""
+        if not image_url:
+            continue
+
+        object_id = item.get("id")
+        results.append(
+            {
+                "object_id": object_id,
+                "title": title,
+                "creator": str(item.get("artist_title", "")).strip() or "Unknown artist",
+                "period": str(item.get("date_display", "")).strip() or "Period unavailable",
+                "image_url": image_url,
+                "source_url": (
+                    f"{website_url}/artworks/{object_id}"
+                    if object_id is not None
+                    else str(item.get("api_link", "")).strip()
+                ),
+                "source_name": "Art Institute of Chicago API",
+                "department": "",
+                "medium": str(item.get("medium_display", "")).strip(),
+                "culture": "",
+                "object_type": normalize_object_type(
+                    item.get("artwork_type_title")
+                    or item.get("classification_title")
+                    or item.get("medium_display")
+                    or ""
+                ),
+            }
+        )
+
+    return results
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 8)
+def search_cma_collection_online(query, limit=8):
+    """Busca obras en la API abierta del Cleveland Museum of Art."""
+    if not query:
+        return []
+
+    try:
+        response = requests.get(
+            f"{CMA_API_BASE_URL}/artworks/",
+            params={
+                "q": query,
+                "has_image": 1,
+                "limit": limit,
+            },
+            timeout=SIMILAR_WEB_SEARCH_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return []
+
+    results = []
+    # Esta API devuelve estructuras distintas, así que normalizamos autor, periodo e imagen.
+    for item in payload.get("data") or []:
+        title = str(item.get("title", "")).strip()
+        images = item.get("images") or {}
+        web_image = images.get("web") or {}
+        image_url = str(web_image.get("url", "")).strip()
+        if not title or not image_url:
+            continue
+
+        creators = item.get("creators") or []
+        creator_names = []
+        for creator in creators:
+            if isinstance(creator, dict):
+                name = str(creator.get("description") or creator.get("creator") or creator.get("name") or "").strip()
+                if name:
+                    creator_names.append(name)
+
+        results.append(
+            {
+                "object_id": item.get("id"),
+                "title": title,
+                "creator": ", ".join(normalize_text_list(creator_names, limit=3)) or "Unknown artist",
+                "period": (
+                    str(item.get("date_text", "")).strip()
+                    or str(item.get("creation_date", "")).strip()
+                    or "Period unavailable"
+                ),
+                "image_url": image_url,
+                "source_url": str(item.get("url", "")).strip(),
+                "source_name": "Cleveland Museum of Art Open Access API",
+                "department": str(item.get("department", "")).strip(),
+                "medium": str(item.get("technique", "")).strip() or str(item.get("type", "")).strip(),
+                "culture": str(item.get("culture", "")).strip(),
+                "object_type": normalize_object_type(
+                    item.get("type")
+                    or item.get("technique")
+                    or ""
+                ),
+            }
+        )
+
+    return results
+
+
+def infer_similar_art_search_hints(latest_user_message, assistant_response):
+    """Pide al modelo pistas estructuradas para buscar obras similares."""
+    user_text = str(latest_user_message.get("content", "")).strip()
+    prompt = """
+Return JSON only. Do not add markdown.
+Infer search hints to find visually similar artworks in museum collection APIs.
+Use the uploaded image as the main signal and the assistant analysis only as a weak hint.
+
+Schema:
+{
+  "primary_artist": "single best artist guess or empty string",
+  "likely_artists": ["max 3 names"],
+  "likely_period": "short period label",
+  "likely_style": "short style label",
+  "object_type": "painting, sculpture, ceramic, drawing, print, textile, photograph, decorative object, or empty string",
+  "material_terms": ["up to 4 material or technique terms"],
+  "search_terms": ["4 to 6 short visual keywords"]
+}
+
+Rules:
+- If uncertain, return empty strings or an empty list.
+- Keep search_terms short and concrete.
+- Prefer identifying the kind of object before the style.
+- If the image looks like a sculpture, utensil, vessel, ceramic object, or decorative object, say so.
+- Do not invent exact artwork titles unless confidence is high.
+""".strip()
+
+    # Le pedimos al modelo que devuelva una estructura JSON compacta y fácil de consumir.
+    try:
+        completion = client_google.chat.completions.create(
+            model=model_google,
+            messages=[
+                {"role": "system", "content": prompt},
+                build_model_message(latest_user_message),
+                {
+                    "role": "user",
+                    "content": (
+                        "Assistant analysis hint:\n"
+                        f"{assistant_response[:1800]}\n\n"
+                        f"User text hint:\n{user_text or 'No extra user text.'}"
+                    ),
+                },
+            ],
+        )
+    except Exception:
+        return None
+
+    raw_content = ""
+    if completion and getattr(completion, "choices", None):
+        raw_content = completion.choices[0].message.content or ""
+
+    payload = extract_json_object(raw_content)
+    if not isinstance(payload, dict):
+        return None
+
+    primary_artist = str(payload.get("primary_artist", "")).strip()
+    likely_artists = normalize_text_list(payload.get("likely_artists", []), limit=3)
+    if primary_artist and primary_artist.lower() not in {artist.lower() for artist in likely_artists}:
+        likely_artists = normalize_text_list([primary_artist] + likely_artists, limit=3)
+
+    return {
+        "primary_artist": primary_artist,
+        "likely_artists": likely_artists,
+        "likely_period": str(payload.get("likely_period", "")).strip(),
+        "likely_style": str(payload.get("likely_style", "")).strip(),
+        "object_type": normalize_object_type(payload.get("object_type", "")),
+        "material_terms": normalize_text_list(payload.get("material_terms", []), limit=4),
+        "search_terms": normalize_text_list(payload.get("search_terms", []), limit=6),
+    }
+
+
+def find_online_similar_artworks(latest_user_message, assistant_response, limit=SIMILAR_WEB_MATCH_LIMIT):
+    """Busca referencias visuales online sin interrumpir el flujo principal del chat."""
+    if not latest_user_message or not latest_user_message.get("images"):
+        return []
+
+    if st.session_state.get("selected_artist_context_name") or st.session_state.get("selected_met_object_context_id"):
+        return []
+
+    # Primera capa: inferimos señales visuales y semánticas a partir de la imagen y la respuesta.
+    search_hints = infer_similar_art_search_hints(latest_user_message, assistant_response)
+    if not search_hints:
+        return []
+
+    # Segunda capa: construimos consultas más fuertes centradas en autor y tipo de objeto.
+    artist_queries = []
+    primary_artist = str(search_hints.get("primary_artist", "")).strip()
+    object_type = str(search_hints.get("object_type", "")).strip()
+    likely_period = str(search_hints.get("likely_period", "")).strip()
+    material_terms = normalize_text_list(search_hints.get("material_terms", []), limit=3)
+    if primary_artist:
+        artist_queries.append(" ".join(part for part in [primary_artist, object_type] if part))
+        artist_queries.append(" ".join(part for part in [primary_artist] + material_terms[:2] if part))
+        artist_queries.append(" ".join(part for part in [primary_artist, likely_period] if part))
+
+    queries = normalize_text_list(
+        artist_queries + build_similar_art_search_queries(
+            search_hints,
+            fallback_text=latest_user_message.get("content", ""),
+        ),
+        limit=6,
+    )
+    if not queries:
+        return []
+
+    # Tercera capa: reunimos candidatos de varias fuentes públicas antes de puntuar.
+    candidate_matches = []
+    seen_keys = set()
+    for query in queries:
+        met_ids = search_met_collection_online(query)[:8]
+        for object_id in met_ids:
+            object_data = fetch_met_object_online(object_id)
+            if object_data is None:
+                continue
+            key = (
+                object_data.get("source_name", ""),
+                object_data.get("title", "").strip().lower(),
+                object_data.get("creator", "").strip().lower(),
+            )
+            if key in seen_keys:
+                continue
+            candidate_matches.append(object_data)
+            seen_keys.add(key)
+
+        for object_data in search_aic_collection_online(query, limit=6):
+            key = (
+                object_data.get("source_name", ""),
+                object_data.get("title", "").strip().lower(),
+                object_data.get("creator", "").strip().lower(),
+            )
+            if key in seen_keys:
+                continue
+            candidate_matches.append(object_data)
+            seen_keys.add(key)
+
+        for object_data in search_cma_collection_online(query, limit=6):
+            key = (
+                object_data.get("source_name", ""),
+                object_data.get("title", "").strip().lower(),
+                object_data.get("creator", "").strip().lower(),
+            )
+            if key in seen_keys:
+                continue
+            candidate_matches.append(object_data)
+            seen_keys.add(key)
+
+        if len(candidate_matches) >= 24:
+            break
+
+    if not candidate_matches:
+        return []
+
+    # Agrupamos por prioridad para que primero salgan las coincidencias más cercanas.
+    grouped_matches = {
+        "same_artist_same_type": [],
+        "same_artist": [],
+        "same_type": [],
+        "general": [],
+    }
+    expected_object_type = normalize_object_type(search_hints.get("object_type", ""))
+
+    for object_data in candidate_matches[:24]:
+        score = score_online_match(object_data, search_hints)
+        match_type = normalize_object_type(object_data.get("object_type", ""))
+        is_same_artist = same_artist_match(object_data, search_hints)
+        is_same_type = bool(expected_object_type) and match_type == expected_object_type
+        if is_same_artist and is_same_type:
+            grouped_matches["same_artist_same_type"].append((score, object_data))
+        elif is_same_artist:
+            grouped_matches["same_artist"].append((score, object_data))
+        elif is_same_type:
+            grouped_matches["same_type"].append((score, object_data))
+        else:
+            grouped_matches["general"].append((score, object_data))
+
+    for bucket_name in grouped_matches:
+        grouped_matches[bucket_name].sort(
+            key=lambda item: (
+                item[0],
+                item[1].get("creator", "") != "Unknown artist",
+                item[1].get("period", "") != "Period unavailable",
+                bool(item[1].get("source_url", "")),
+            ),
+            reverse=True,
+        )
+
+    deduped = []
+    seen_titles = set()
+    source_buckets = {}
+
+    for bucket_name in ["same_artist_same_type", "same_artist", "same_type", "general"]:
+        for _, match in grouped_matches[bucket_name]:
+            key = (match.get("title", "").strip().lower(), match.get("creator", "").strip().lower())
+            if key in seen_titles:
+                continue
+            source_name = str(match.get("source_name", "Online collection")).strip() or "Online collection"
+            source_buckets.setdefault((bucket_name, source_name), []).append(match)
+            seen_titles.add(key)
+
+    ordered_sources = sorted(
+        source_buckets.keys(),
+        key=lambda source_key: (
+            ["same_artist_same_type", "same_artist", "same_type", "general"].index(source_key[0]),
+            -max(
+                score_online_match(candidate, search_hints) for candidate in source_buckets.get(source_key, [])
+            ),
+        ),
+    )
+
+    source_cycle = ordered_sources[:]
+    while source_cycle and len(deduped) < limit:
+        next_cycle = []
+        for source_key in source_cycle:
+            bucket = source_buckets.get(source_key, [])
+            if not bucket:
+                continue
+            deduped.append(bucket.pop(0))
+            if len(deduped) >= limit:
+                break
+            if bucket:
+                next_cycle.append(source_key)
+        source_cycle = next_cycle
+
+    # Descargamos las miniaturas ya elegidas para que el render no dependa de hotlink directo.
+    for match in deduped:
+        match["image_bytes"] = fetch_remote_image_bytes(
+            match.get("image_url", ""),
+            source_name=str(match.get("source_name", "")),
+        )
+
+    return deduped
+
+
 def render_message(message, index, container=None):
-    """Renderiza un mensaje de chat, incluyendo imágenes y controles de edición."""
+    """Renderiza un mensaje del chat, incluyendo imágenes y controles de edición."""
     target = container if container is not None else st
     is_editing = (
         message["role"] == "user"
@@ -2011,6 +2802,7 @@ def render_message(message, index, container=None):
     with target.chat_message(message["role"], avatar=avatar):
         render_role_marker(message["role"])
 
+        # Si este mensaje está en edición, lo reemplazamos por un pequeño formulario.
         if is_editing:
             # Durante la edición, el cuerpo del mensaje se sustituye por un formulario.
             st.caption(
@@ -2036,11 +2828,14 @@ def render_message(message, index, container=None):
 
             return
 
+        # El texto del mensaje se muestra antes de las imágenes para mantener el flujo natural de lectura.
         if message.get("content"):
             st.write(message["content"])
 
         render_images(message)
+        render_online_matches(message)
 
+        # Solo los mensajes del usuario pueden reabrirse y editarse.
         if message["role"] == "user":
             # Solo los mensajes del usuario pueden editarse.
             if st.button("Edit message", key=f"edit_message_{index}"):
@@ -2049,12 +2844,13 @@ def render_message(message, index, container=None):
 
 
 def build_model_message(message):
-    """Convierte un mensaje interno al formato esperado por la API del modelo.
+    """Convierte un mensaje interno al formato que espera la API del modelo.
 
     Los mensajes de solo texto se envían tal cual.
-    Los mensajes del usuario con imágenes adjuntas se transforman en contenido
-    multimodal: un bloque de texto y un bloque ``image_url`` por cada imagen.
+    Los mensajes con imágenes adjuntas se transforman en contenido multimodal:
+    un bloque de texto y un bloque ``image_url`` por cada imagen.
     """
+    # Si no hay imágenes, el mensaje se pasa tal cual.
     if message["role"] != "user" or not message.get("images"):
         return {"role": message["role"], "content": message["content"]}
 
@@ -2068,6 +2864,7 @@ def build_model_message(message):
         }
     )
 
+    # Cada imagen se convierte en un bloque independiente para el modelo multimodal.
     for image in message["images"]:
         content.append(
             {
@@ -2099,10 +2896,12 @@ def get_user_submission(disabled=False):
     Se evita ``st.chat_input`` porque puede reposicionar la vista al montarse
     durante un refresh, lo que dificulta ver el encabezado al cargar la página.
     """
+    # Si estamos editando un mensaje anterior, bloqueamos el envío nuevo.
     if disabled:
         st.info("Finish editing the selected message to continue chatting.")
         return None
 
+    # Mostramos recordatorios del contexto activo para que el usuario sepa qué está guiando la respuesta.
     active_artist = get_artist_record_by_name(
         st.session_state.get("selected_artist_context_name")
     )
@@ -2139,6 +2938,7 @@ def get_user_submission(disabled=False):
             f"{alternatives_text}"
         )
 
+    # El formulario mantiene estable la interfaz y evita saltos de scroll innecesarios.
     with st.form("chat_with_image", clear_on_submit=True):
         st.markdown('<div class="composer-flag"></div>', unsafe_allow_html=True)
 
@@ -2154,6 +2954,7 @@ def get_user_submission(disabled=False):
         with send_col:
             submitted = st.form_submit_button("↑", use_container_width=True)
 
+        # El expander separa el texto del adjunto visual sin ocupar espacio fijo.
         with st.expander("Attach artwork images"):
             uploaded_files = st.file_uploader(
                 "Attach artwork images",
@@ -2165,6 +2966,7 @@ def get_user_submission(disabled=False):
         if uploaded_files:
             st.caption(f"{len(uploaded_files)} image(s) ready to send.")
 
+    # Solo devolvemos un envío cuando hay texto o imágenes.
     if submitted and (prompt_text.strip() or uploaded_files):
         return {"text": prompt_text.strip(), "files": uploaded_files}
 
@@ -2173,6 +2975,7 @@ def get_user_submission(disabled=False):
 
 render_sidebar_audience_menu()
 
+# Distribuimos la pantalla entre el contenido principal y la barra lateral derecha.
 main_col, right_col = st.columns([5.1, 1.45], gap="large")
 messages_container = None
 
@@ -2181,6 +2984,7 @@ with right_col:
 
 with main_col:
     if selected_panel == "Chat Studio":
+        # En la vista principal de chat mostramos ayuda rápida, contexto activo e historial.
         render_quick_start()
         render_active_context_summary()
 
@@ -2194,6 +2998,7 @@ with main_col:
             render_message(msg, index, container=messages_container)
 
     elif selected_panel == "Artist Explorer":
+        # Explorador de artistas local con filtros y referencias de apoyo.
         st.markdown(
             '<div class="section-caption-dark">Browse artist profiles, preview works from your local dataset, and activate a reference for the chat.</div>',
             unsafe_allow_html=True,
@@ -2201,6 +3006,7 @@ with main_col:
         render_artist_browser()
 
     elif selected_panel == "MET Object Explorer":
+        # Explorador de objetos del MET con filtros y vista previa local.
         st.markdown(
             '<div class="section-caption-dark">Browse museum objects from your new dataset, inspect their metadata, and use them as grounded references.</div>',
             unsafe_allow_html=True,
@@ -2209,13 +3015,14 @@ with main_col:
 
 
 def generate_assistant_reply(container):
-    """Envía la conversación actual a Gemini o OpenAI y muestra la respuesta en streaming."""
+    """Envía la conversación actual al modelo y muestra la respuesta en streaming."""
     conversation = [{"role": "system", "content": stronger_prompt}]
 
     latest_user_message = next(
         (message for message in reversed(st.session_state.messages) if message["role"] == "user"),
         None,
     )
+    # Si hay un mensaje reciente del usuario, añadimos contexto local antes de responder.
     if latest_user_message is not None:
         artist_reference_message = build_artist_reference_message()
         if artist_reference_message is not None:
@@ -2227,6 +3034,10 @@ def generate_assistant_reply(container):
 
     conversation.extend(build_model_message(message) for message in st.session_state.messages)
 
+    # Se acumulan aquí las coincidencias online que se van a mostrar al final.
+    online_matches = []
+
+    # El mensaje del asistente se renderiza en streaming para dar sensación de respuesta viva.
     with container.chat_message("assistant", avatar="🖌️"):
         render_role_marker("assistant")
         stream = client_google.chat.completions.create(
@@ -2235,23 +3046,34 @@ def generate_assistant_reply(container):
             stream=True,
         )
         response = st.write_stream(stream)
+        # Tras responder, intentamos enriquecer la salida con referencias externas si aplica.
+        online_matches = find_online_similar_artworks(latest_user_message, response)
+        if online_matches:
+            render_online_matches({"online_matches": online_matches})
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    # Guardamos también las coincidencias online para que persistan en reruns.
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": response,
+            "online_matches": online_matches,
+        }
+    )
 
 
 if selected_panel == "Chat Studio" and messages_container is not None:
-    # Si un mensaje anterior fue editado, regenera la respuesta una sola vez en el rerun.
+    # Si un mensaje anterior fue editado, regeneramos exactamente una vez.
     if st.session_state.pending_regeneration is not None:
         st.session_state.pending_regeneration = None
         generate_assistant_reply(messages_container)
 
-    # Desactiva nuevos envíos mientras la persona usuaria edita un mensaje anterior.
+    # Bloqueamos nuevos envíos mientras haya una edición pendiente.
     submission = get_user_submission(
         disabled=st.session_state.editing_message_index is not None
     )
 
     if submission:
-        # Guarda el nuevo turno del usuario en la misma estructura del historial.
+        # Convertimos el envío del formulario en el formato de historial interno.
         user_message = {
             "role": "user",
             "content": submission["text"],
@@ -2259,13 +3081,13 @@ if selected_panel == "Chat Studio" and messages_container is not None:
         }
 
         st.session_state.messages.append(user_message)
-        # Renderiza el mensaje recién enviado antes de iniciar el streaming de la respuesta.
+        # Pintamos el nuevo mensaje antes de lanzar el streaming del asistente.
         render_message(
             user_message,
             len(st.session_state.messages) - 1,
             container=messages_container,
         )
-        # Genera la respuesta del asistente usando el historial actualizado.
+        # Respuesta final basada en el historial ya actualizado.
         generate_assistant_reply(messages_container)
 
 st.markdown(

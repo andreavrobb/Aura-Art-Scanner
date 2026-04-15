@@ -1,15 +1,25 @@
+"""Versión experimental de Aura Art Scanner con selección manual de proveedor LLM.
+
+Este archivo documenta un flujo más técnico que el de `main_01.py`:
+- carga claves desde variables de entorno,
+- crea clientes compatibles con OpenAI,
+- ofrece varios proveedores de modelo,
+- y enruta la conversación al backend elegido.
+
+Se usa como laboratorio para comparar modelos y comportamientos.
+"""
+
 import os
-from dotenv import load_dotenv
 import streamlit as st
 
-# OpenAI-compatible clients
+from dotenv import load_dotenv
 from openai import OpenAI
 
-# Gemini
+# Cliente nativo de Gemini.
 import google.generativeai as genai
 
 # ============================================
-#  API KEYS SET UP 
+# Carga de configuración
 # ============================================
 load_dotenv(override=True)
 
@@ -18,42 +28,41 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# 🔥 CONTROL MANUAL DEL MODELO (EDITA AQUÍ)
+# Selector manual del proveedor de modelo.
 MODEL_PROVIDER = "openai"
-# opciones: "openai", "gemini", "groq", "deepseek"
+# Opciones: `openai`, `gemini`, `groq`, `deepseek`.
 
-# OpenAI-compatible clients
+# Cliente estándar de OpenAI.
 client_openai = OpenAI(api_key=OPENAI_API_KEY)
-
-
+# Cliente compatible con la API de Groq.
 client_groq = OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
 )
-
+# Cliente compatible con la API de DeepSeek.
 client_deepseek = OpenAI(
     api_key=DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com/v1"
 )
 
-# Gemini
+# Cliente nativo de Gemini.
 genai.configure(api_key=GOOGLE_API_KEY)
 model_gemini = genai.GenerativeModel("gemini-2.5-flash")
 
 # ============================================
-# User Interface
+# Interfaz
 # ============================================
 st.set_page_config(page_title="Aura Art Scanner", page_icon="🎨")
 
+# Título y estado del proveedor activo.
 st.title("🎨 Aura Art Scanner")
 st.caption("This is a tool that helps you scan art and get information about it 🖌")
-
-# Debug opcional
 st.caption(f"🧠 Model active: {MODEL_PROVIDER}")
 
 # ============================================
-# STRONGER PROMPT 
+# Prompt base
 # ============================================
+# Cada bloque separa una parte del comportamiento deseado del asistente.
 role_section = r"""🎨🤖 **Rol principal**
 Eres un asistente experto en ciencia de datos aplicada al arte, computer vision, historia del arte e ingeniería de software.
 Tu enfoque es educativo, técnico y práctico.
@@ -96,6 +105,7 @@ end_state = r"""🎯 Meta:
 App IA arte completa
 """
 
+# Ensamblamos el prompt final uniendo todas las secciones.
 stronger_prompt = "\n".join([
     role_section,
     security_section,
@@ -109,19 +119,22 @@ stronger_prompt = "\n".join([
 ])
 
 # ============================================
-# SESSION
+# Estado de sesión
 # ============================================
+# Historial persistente de la conversación dentro de Streamlit.
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Re-render del historial existente para que la conversación siga visible.
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # ============================================
-# ADAPTERS
+# Adaptadores
 # ============================================
 
 def call_openai_like(client, model, messages):
+    """Ejecuta streaming contra un cliente compatible con OpenAI."""
     placeholder = st.empty()
     full = ""
 
@@ -143,6 +156,7 @@ def call_openai_like(client, model, messages):
 
 
 def build_gemini_prompt(system_prompt, messages):
+    """Convierte el historial de chat al formato de prompt plano que usa Gemini."""
     prompt = system_prompt + "\n\n"
     for m in messages:
         if m["role"] == "user":
@@ -154,6 +168,7 @@ def build_gemini_prompt(system_prompt, messages):
 
 
 def call_gemini(prompt):
+    """Ejecuta Gemini con streaming y va pintando la respuesta progresivamente."""
     placeholder = st.empty()
     full = ""
 
@@ -168,9 +183,10 @@ def call_gemini(prompt):
 
 
 # ============================================
-# ROUTER
+# Enrutador
 # ============================================
 def run_llm(provider, conversation, stronger_prompt, messages):
+    """Selecciona el backend LLM según el proveedor configurado."""
 
     if provider == "openai":
         return call_openai_like(client_openai, "gpt-5.4-mini", conversation)
@@ -190,17 +206,19 @@ def run_llm(provider, conversation, stronger_prompt, messages):
 
 
 # ============================================
-# USER INPUT
+# Entrada del usuario
 # ============================================
 user_input = st.chat_input("Ask about art...")
 
 if user_input:
+    # Guardamos el mensaje del usuario para conservar el historial.
     st.session_state.messages.append({
         "role": "user",
         "content": user_input
     })
     st.chat_message("user").write(user_input)
 
+    # Construimos la conversación completa con el prompt del sistema al inicio.
     conversation = [{
         "role": "system",
         "content": stronger_prompt
