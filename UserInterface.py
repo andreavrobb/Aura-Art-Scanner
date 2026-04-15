@@ -743,23 +743,21 @@ css_background = """
 }
 
 .brand-mark {
-    width: clamp(4.6rem, 7vw, 6.1rem);
-    aspect-ratio: 1;
-    border-radius: 26px;
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(177, 135, 67, 0.14);
-    box-shadow: 0 18px 36px rgba(43, 67, 104, 0.12);
-    padding: 0.45rem;
+    width: clamp(8.8rem, 15vw, 13.2rem);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    backdrop-filter: blur(12px);
 }
 
 .brand-mark img {
     width: 100%;
-    height: 100%;
+    height: auto;
     object-fit: contain;
+    display: block;
 }
 
 .app-title-row {
@@ -1306,7 +1304,7 @@ st.markdown(
     f"""<div class="page-top-spacer"></div>
     <div class="hero-shell">
         <div class="app-title-row">
-            <div class="brand-mark" style="width: clamp(7.2rem, 14vw, 10rem);">
+            <div class="brand-mark">
                 <img src="{logo_image_url or ''}" alt="Aura Gemini logo" />
             </div>
         </div>
