@@ -54,7 +54,7 @@ model_google = "gemini-2.5-flash"
 # Imagen local usada como fondo de la aplicación.
 # Fondo principal de la interfaz.
 BACKGROUND_IMAGE_PATH = Path(__file__).resolve().parent / "assets" / "reflets_du_soir_echappee_belle.jpeg"
-AURA_LOGO_PATH = Path("/Users/andreavrob/Desktop/Aura.jpg")
+AURA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "aura_logo.jpg"
 METADATA_CSV_PATH = Path(__file__).resolve().parent / "met_art_data2" / "metadata_cleaned_updated.csv"
 MET_IMAGES_ZIP_PATH = Path(__file__).resolve().parent / "met_art_data2" / "images_updated.zip"
 MET_IMAGES_DIR = Path(__file__).resolve().parent / "met_art_data2" / "images_extracted"
