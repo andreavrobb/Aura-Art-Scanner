@@ -744,6 +744,7 @@ css_background = """
 
 .brand-mark {
     width: clamp(8.8rem, 15vw, 13.2rem);
+    aspect-ratio: 1;
     background: transparent;
     border: none;
     box-shadow: none;
@@ -751,12 +752,14 @@ css_background = """
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
 }
 
 .brand-mark img {
     width: 100%;
-    height: auto;
-    object-fit: contain;
+    height: 100%;
+    object-fit: cover;
+    object-position: center center;
     display: block;
 }
 
