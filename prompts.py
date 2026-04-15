@@ -82,6 +82,22 @@ Ayudar al usuario a desarrollar una mirada experta:
 """
 
 # ============================================
+# Idioma
+# ============================================
+# Obliga a Aura a responder en el mismo idioma del usuario.
+language_section = r"""
+🌐 **Idioma de respuesta**
+
+- Responde siempre en el mismo idioma en que el usuario te hable
+- Si el usuario escribe en español, responde en español
+- Si el usuario escribe en inglés, responde en inglés
+- Solo cambia de idioma si el usuario lo pide explícitamente
+- Si el mensaje mezcla idiomas, usa el idioma predominante del último mensaje
+- Mantén nombres propios, títulos de obras y movimientos en su forma más natural
+  cuando corresponda, pero explica todo lo demás en el idioma del usuario
+"""
+
+# ============================================
 # Estilo
 # ============================================
 # Marca el tono y la estructura de las respuestas.
@@ -211,6 +227,7 @@ stronger_prompt = "\n".join([
     role_section,
     security_section,
     goal_section,
+    language_section,
     style_section,
     image_analysis_section,
     response_template,
