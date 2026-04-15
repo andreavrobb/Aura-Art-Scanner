@@ -743,7 +743,7 @@ css_background = """
 }
 
 .brand-mark {
-    width: clamp(8.8rem, 15vw, 13.2rem);
+    width: clamp(7.6rem, 13vw, 11.2rem);
     aspect-ratio: 1;
     background: transparent;
     border: none;
