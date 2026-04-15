@@ -1327,7 +1327,7 @@ SUPPORTED_IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 # --------------------------------------------
 if "messages" not in st.session_state:
     # La conversación empieza con un mensaje guía del asistente.
-    st.session_state.messages = [{"role": "assistant", "content": "Comparte una imagen o haz una pregunta sobre arte y te ayudaré a analizarla, interpretarla y conectarla con estilos, artistas y obras."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Upload an image to uncover its artistic style, influences, and connections. But first, tell me your name to personalize your experience"}]
 
 if "editing_message_index" not in st.session_state:
     # Guarda el índice del mensaje del usuario que se está editando.
