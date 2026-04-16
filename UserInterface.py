@@ -592,6 +592,82 @@ css_background = """
     --text-main: #3f2c1f;
 }
 
+/* Only adjust contrast when the OS/browser resolves to dark mode.
+   Streamlit's "System" option also lands here whenever the system theme is dark. */
+@media (prefers-color-scheme: dark) {
+    .stApp [data-testid="stSidebar"],
+    .stApp [data-testid="stSidebar"] > div:first-child {
+        background: rgba(20, 23, 31, 0.96) !important;
+        background-color: rgba(20, 23, 31, 0.96) !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    .stApp [data-testid="stSidebar"] label,
+    .stApp [data-testid="stSidebar"] p,
+    .stApp [data-testid="stSidebar"] span,
+    .stApp [data-testid="stSidebar"] h1,
+    .stApp [data-testid="stSidebar"] h2,
+    .stApp [data-testid="stSidebar"] h3,
+    .stApp [data-testid="stSidebar"] h4,
+    .stApp [data-testid="stSidebar"] h5,
+    .stApp [data-testid="stSidebar"] h6,
+    .stApp [data-testid="stSidebar"] .stCaption,
+    .stApp [data-testid="stSidebar"] .stRadio label,
+    .stApp [data-testid="stSidebar"] [data-baseweb="radio"] span,
+    .stApp [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+    .stApp [data-testid="stSidebar"] [data-testid="stExpander"] details summary p {
+        color: #f5f2ea !important;
+    }
+
+    .stApp [data-testid="stSidebar"] [data-testid="stExpander"] {
+        border-color: rgba(255, 255, 255, 0.12) !important;
+        background: rgba(29, 33, 43, 0.9) !important;
+    }
+
+    .stApp [data-testid="stHeader"] {
+        background: rgba(7, 10, 17, 0.28);
+    }
+
+    .stApp [data-testid="stHeader"] button {
+        background: rgba(28, 32, 42, 0.94) !important;
+        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        color: #f8f6f1 !important;
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+    }
+
+    .stApp [data-testid="stHeader"] button svg,
+    .stApp [data-testid="stHeader"] button path,
+    .stApp [data-testid="stHeader"] button circle,
+    .stApp [data-testid="stHeader"] button line {
+        fill: #f8f6f1 !important;
+        stroke: #f8f6f1 !important;
+        color: #f8f6f1 !important;
+    }
+
+    .stApp [data-testid="stSidebar"] .sidebar-profile-card {
+        background: rgba(29, 33, 43, 0.92) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+
+    .stApp [data-testid="stSidebar"] .sidebar-profile-kicker {
+        background: rgba(45, 59, 51, 0.94) !important;
+        border: 1px solid rgba(140, 193, 158, 0.22) !important;
+        color: #f5f2ea !important;
+    }
+
+    .stApp [data-testid="stSidebar"] .sidebar-profile-title,
+    .stApp [data-testid="stSidebar"] .sidebar-profile-copy,
+    .stApp [data-testid="stSidebar"] .sidebar-profile-focus {
+        color: #f5f2ea !important;
+    }
+
+    .stApp [data-testid="stSidebar"] .sidebar-profile-focus {
+        background: rgba(33, 42, 38, 0.94) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+}
+
 .stApp {
     background-image: BACKGROUND_LAYERS_VALUE;
     background-size: cover;
