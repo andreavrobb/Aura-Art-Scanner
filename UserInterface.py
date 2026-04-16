@@ -590,32 +590,6 @@ css_background = """
     --panel: rgba(255, 252, 247, 0.78);
     --panel-border: rgba(177, 135, 67, 0.22);
     --text-main: #3f2c1f;
-    --sidebar-surface: rgba(255, 248, 241, 0.92);
-    --sidebar-border: rgba(113, 154, 113, 0.18);
-    --sidebar-text-main: #3f2c1f;
-    --sidebar-text-muted: rgba(63, 44, 31, 0.78);
-    --sidebar-card: rgba(255, 250, 244, 0.82);
-    --sidebar-card-border: rgba(113, 154, 113, 0.2);
-    --sidebar-kicker-bg: rgba(215, 240, 222, 0.92);
-    --sidebar-kicker-border: rgba(104, 160, 118, 0.22);
-    --sidebar-focus-bg: rgba(232, 246, 238, 0.95);
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --panel: rgba(17, 20, 27, 0.88);
-        --panel-border: rgba(255, 255, 255, 0.1);
-        --text-main: #f4efe7;
-        --sidebar-surface: rgba(18, 20, 28, 0.96);
-        --sidebar-border: rgba(255, 255, 255, 0.08);
-        --sidebar-text-main: #f5f2ea;
-        --sidebar-text-muted: rgba(245, 242, 234, 0.74);
-        --sidebar-card: rgba(28, 31, 41, 0.94);
-        --sidebar-card-border: rgba(255, 255, 255, 0.1);
-        --sidebar-kicker-bg: rgba(42, 53, 47, 0.94);
-        --sidebar-kicker-border: rgba(138, 190, 155, 0.2);
-        --sidebar-focus-bg: rgba(30, 40, 35, 0.95);
-    }
 }
 
 .stApp {
@@ -634,34 +608,6 @@ css_background = """
 .stApp [data-testid="stHeader"] {
     background: rgba(255, 249, 241, 0.18);
     backdrop-filter: blur(8px);
-}
-
-.stApp [data-testid="stSidebar"],
-.stApp [data-testid="stSidebar"] > div:first-child {
-    background: var(--sidebar-surface) !important;
-    background-color: var(--sidebar-surface) !important;
-    border-right: 1px solid var(--sidebar-border);
-}
-
-.stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stSidebar"] label,
-.stApp [data-testid="stSidebar"] p,
-.stApp [data-testid="stSidebar"] span,
-.stApp [data-testid="stSidebar"] h1,
-.stApp [data-testid="stSidebar"] h2,
-.stApp [data-testid="stSidebar"] h3,
-.stApp [data-testid="stSidebar"] h4,
-.stApp [data-testid="stSidebar"] h5,
-.stApp [data-testid="stSidebar"] h6,
-.stApp [data-testid="stSidebar"] .stCaption,
-.stApp [data-testid="stSidebar"] .stRadio {
-    color: var(--sidebar-text-main);
-}
-
-.stApp [data-testid="stSidebar"] .stRadio label,
-.stApp [data-testid="stSidebar"] [data-baseweb="radio"] span,
-.stApp [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: var(--sidebar-text-main) !important;
 }
 
 .stApp [data-testid="stAppViewBlockContainer"],
@@ -905,8 +851,8 @@ css_background = """
 }
 
 .sidebar-profile-card {
-    background: var(--sidebar-card);
-    border: 1px solid var(--sidebar-card-border);
+    background: rgba(255, 250, 244, 0.82);
+    border: 1px solid rgba(113, 154, 113, 0.2);
     border-radius: 22px;
     padding: 0.95rem 1rem;
     box-shadow: 0 14px 28px rgba(47, 82, 54, 0.08);
@@ -922,9 +868,9 @@ css_background = """
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--sidebar-text-main);
-    background: var(--sidebar-kicker-bg);
-    border: 1px solid var(--sidebar-kicker-border);
+    color: #2c5b42;
+    background: rgba(215, 240, 222, 0.92);
+    border: 1px solid rgba(104, 160, 118, 0.22);
     border-radius: 999px;
     padding: 0.34rem 0.65rem;
     margin-bottom: 0.65rem;
@@ -933,23 +879,23 @@ css_background = """
 .sidebar-profile-title {
     font-size: 1.08rem;
     font-weight: 800;
-    color: var(--sidebar-text-main);
+    color: #2d2b28;
     margin-bottom: 0.45rem;
 }
 
 .sidebar-profile-copy {
     font-size: 0.96rem;
     line-height: 1.5;
-    color: var(--sidebar-text-muted);
+    color: #4e473f;
 }
 
 .sidebar-profile-focus {
     margin-top: 0.75rem;
     padding: 0.7rem 0.8rem;
     border-radius: 16px;
-    background: var(--sidebar-focus-bg);
-    border: 1px solid var(--sidebar-card-border);
-    color: var(--sidebar-text-main);
+    background: rgba(232, 246, 238, 0.95);
+    border: 1px solid rgba(104, 160, 118, 0.2);
+    color: #26412f;
     font-size: 0.93rem;
     line-height: 1.45;
 }
