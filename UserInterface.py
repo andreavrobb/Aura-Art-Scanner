@@ -586,6 +586,41 @@ css_background = """
     --text-main: #3f2c1f;
 }
 
+/* Keep the light theme untouched, but improve contrast in dark/system mode. */
+@media (prefers-color-scheme: dark) {
+    .stApp [data-testid="stSidebar"],
+    .stApp [data-testid="stSidebar"] > div:first-child {
+        background: rgba(22, 24, 33, 0.97) !important;
+        background-color: rgba(22, 24, 33, 0.97) !important;
+    }
+
+    .stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    .stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    .stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li,
+    .stApp [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong,
+    .stApp [data-testid="stSidebar"] label,
+    .stApp [data-testid="stSidebar"] p,
+    .stApp [data-testid="stSidebar"] span,
+    .stApp [data-testid="stSidebar"] h1,
+    .stApp [data-testid="stSidebar"] h2,
+    .stApp [data-testid="stSidebar"] h3,
+    .stApp [data-testid="stSidebar"] h4,
+    .stApp [data-testid="stSidebar"] h5,
+    .stApp [data-testid="stSidebar"] h6,
+    .stApp [data-testid="stSidebar"] .stCaption,
+    .stApp [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+    .stApp [data-testid="stSidebar"] [data-testid="stExpander"] details summary p,
+    .stApp [data-testid="stSidebar"] .sidebar-profile-title,
+    .stApp [data-testid="stSidebar"] .sidebar-profile-copy,
+    .stApp [data-testid="stSidebar"] .sidebar-profile-focus {
+        color: #f5f7fb !important;
+    }
+
+    .stApp [data-testid="stSidebar"] .sidebar-profile-kicker {
+        color: #f5f7fb !important;
+    }
+}
+
 .stApp {
     background-image: BACKGROUND_LAYERS_VALUE;
     background-size: cover;
