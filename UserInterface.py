@@ -2587,8 +2587,8 @@ Rules:
 
     # Le pedimos al modelo que devuelva una estructura JSON compacta y fácil de consumir.
     try:
-        completion = client_google.chat.completions.create(
-            model=model_google,
+        completion = client_openai.chat.completions.create(
+            model=model_openai,
             messages=[
                 {"role": "system", "content": prompt},
                 build_model_message(latest_user_message),
