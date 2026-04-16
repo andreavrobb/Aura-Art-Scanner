@@ -27,7 +27,7 @@ import zipfile
 import pandas as pd
 from PIL import Image
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import APIError, APIStatusError, OpenAI, RateLimitError
 import requests
 import streamlit as st
 
@@ -38,18 +38,12 @@ from prompts import stronger_prompt
 # --------------------------------------------
 load_dotenv(override=True)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+AURA_API_KEY = os.getenv("AURA_API_KEY")
 
 
-# Se mantiene el cliente de OpenAI por si la app vuelve a usar modelos de OpenAI.
-client_openai = OpenAI(api_key=OPENAI_API_KEY)
+# OpenAI es ahora el proveedor principal de Aura.
+client_openai = OpenAI(api_key=AURA_API_KEY)
 model_openai = "gpt-5.4-mini"
-
-# Gemini se usa a través del endpoint compatible con OpenAI.
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-client_google = OpenAI(api_key=GOOGLE_API_KEY, base_url=GEMINI_BASE_URL)
-model_google = "gemini-2.5-flash"
 
 # Imagen local usada como fondo de la aplicación.
 # Fondo principal de la interfaz.
@@ -3037,20 +3031,40 @@ def generate_assistant_reply(container):
 
     # Se acumulan aquí las coincidencias online que se van a mostrar al final.
     online_matches = []
+    response = ""
 
     # El mensaje del asistente se renderiza en streaming para dar sensación de respuesta viva.
     with container.chat_message("assistant", avatar="🖌️"):
         render_role_marker("assistant")
-        stream = client_google.chat.completions.create(
-            model=model_google,
-            messages=conversation,
-            stream=True,
-        )
-        response = st.write_stream(stream)
-        # Tras responder, intentamos enriquecer la salida con referencias externas si aplica.
-        online_matches = find_online_similar_artworks(latest_user_message, response)
-        if online_matches:
-            render_online_matches({"online_matches": online_matches})
+        try:
+            stream = client_openai.chat.completions.create(
+                model=model_openai,
+                messages=conversation,
+                stream=True,
+            )
+            response = st.write_stream(stream)
+            # Tras responder, intentamos enriquecer la salida con referencias externas si aplica.
+            online_matches = find_online_similar_artworks(latest_user_message, response)
+            if online_matches:
+                render_online_matches({"online_matches": online_matches})
+        except RateLimitError:
+            response = (
+                "Aura reached the current OpenAI usage limit and could not answer right now. "
+                "Please try again in a minute or review the quota for AURA_API_KEY."
+            )
+            st.error(response)
+        except APIStatusError as exc:
+            response = (
+                "Aura could not contact OpenAI right now. "
+                f"API status: {exc.status_code}. Please try again shortly."
+            )
+            st.error(response)
+        except APIError:
+            response = (
+                "Aura ran into an API connection problem while generating the answer. "
+                "Please try again shortly."
+            )
+            st.error(response)
 
     # Guardamos también las coincidencias online para que persistan en reruns.
     st.session_state.messages.append(
