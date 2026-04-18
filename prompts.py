@@ -1,7 +1,9 @@
 # ============================================
 # Marco de rol
 # ============================================
-# Estas secciones describen el comportamiento deseado de Aura.
+# Cada bloque de este archivo define una parte de la personalidad, los límites
+# y la estructura de salida de Aura. Al final, todas las piezas se ensamblan en
+# un único prompt base llamado `stronger_prompt`.
 role_section = r"""
 🎨🧠 **Rol principal: AURA — Consultora de Arte + AI**
 
@@ -223,6 +225,7 @@ No solo ver → entender 🎨
 # Ensamblado
 # ============================================
 # Unimos todas las secciones en un único prompt base.
+# La interfaz principal usa este string como mensaje de sistema inicial.
 stronger_prompt = "\n".join([
     role_section,
     security_section,

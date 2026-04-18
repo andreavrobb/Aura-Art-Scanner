@@ -24,10 +24,12 @@ prompt = st.chat_input(
     file_type=["jpg", "jpeg", "png"],
 )
 
+# `prompt` será `None` hasta que el usuario envíe algo desde el chat.
 # Si el usuario escribió texto, se muestra tal cual en pantalla.
 if prompt and prompt.text:
     st.markdown(prompt.text)
 
-# Si el usuario adjuntó una imagen, se renderiza la primera.
+# `st.chat_input` devuelve una lista de archivos en la clave `files`.
+# Como este prototipo es mínimo, solo mostramos la primera imagen recibida.
 if prompt and prompt["files"]:
     st.image(prompt["files"][0])

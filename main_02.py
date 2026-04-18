@@ -138,6 +138,7 @@ def call_openai_like(client, model, messages):
     placeholder = st.empty()
     full = ""
 
+    # Pedimos streaming para ir pintando la respuesta token a token.
     stream = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -145,11 +146,12 @@ def call_openai_like(client, model, messages):
     )
 
     for chunk in stream:
+        # Cada chunk puede traer una pequeña porción de texto o venir vacío.
         if chunk.choices[0].delta.content:
             text = chunk.choices[0].delta.content
             full += text
 
-            # 👇 clave: render completo acumulado
+            # Renderizamos el acumulado completo para que el markdown no parpadee.
             placeholder.markdown(full)
 
     return full
@@ -159,6 +161,7 @@ def build_gemini_prompt(system_prompt, messages):
     """Convierte el historial de chat al formato de prompt plano que usa Gemini."""
     prompt = system_prompt + "\n\n"
     for m in messages:
+        # Convertimos el historial estructurado a un transcript simple.
         if m["role"] == "user":
             prompt += f"User: {m['content']}\n"
         elif m["role"] == "assistant":
@@ -172,6 +175,7 @@ def call_gemini(prompt):
     placeholder = st.empty()
     full = ""
 
+    # Gemini nativo usa otra API, pero mantenemos una experiencia visual similar.
     response = model_gemini.generate_content(prompt, stream=True)
 
     for chunk in response:
@@ -187,7 +191,7 @@ def call_gemini(prompt):
 # ============================================
 def run_llm(provider, conversation, stronger_prompt, messages):
     """Selecciona el backend LLM según el proveedor configurado."""
-
+    # Cada rama traduce la misma conversación al backend elegido.
     if provider == "openai":
         return call_openai_like(client_openai, "gpt-5.4-mini", conversation)
 
@@ -223,6 +227,7 @@ if user_input:
         "role": "system",
         "content": stronger_prompt
     }]
+    # Añadimos el historial para que el modelo vea toda la conversación previa.
     conversation.extend(st.session_state.messages)
 
     with st.chat_message("assistant"):
