@@ -58,6 +58,42 @@ DEFAULT_MODEL_NAME = "ViT-B-32"
 DEFAULT_PRETRAINED_NAME = "laion2b_s34b_b79k"
 
 
+def _resolve_image_path(raw_path: str) -> Path | None:
+    """Resuelve rutas antiguas absolutas y rutas relativas portables.
+
+    En desarrollo local el índice histórico quedó persistido con rutas
+    absolutas de la máquina original. En Streamlit Cloud esas rutas no
+    existen, así que intentamos reconstruir una ruta válida dentro del repo.
+    """
+    cleaned = str(raw_path or "").strip()
+    if not cleaned:
+        return None
+
+    candidate = Path(cleaned)
+    if candidate.exists():
+        return candidate
+
+    path_parts = candidate.parts
+    if "met_art_data2" in path_parts:
+        start = path_parts.index("met_art_data2")
+        rebuilt = BASE_DIR.joinpath(*path_parts[start:])
+        if rebuilt.exists():
+            return rebuilt
+
+    if "met_art_data" in path_parts:
+        start = path_parts.index("met_art_data")
+        rebuilt = BASE_DIR.joinpath(*path_parts[start:])
+        if rebuilt.exists():
+            return rebuilt
+
+    if not candidate.is_absolute():
+        rebuilt = BASE_DIR / candidate
+        if rebuilt.exists():
+            return rebuilt
+
+    return None
+
+
 def local_similarity_dependencies_ready() -> bool:
     """Comprueba si el entorno tiene instaladas las dependencias opcionales."""
     return np is not None and open_clip is not None and torch is not None
@@ -185,11 +221,12 @@ def load_local_index():
 def _build_match_result(meta: dict, similarity: float):
     """Convierte metadata cruda del índice al formato que usa la UI."""
     image_path = str(meta.get("image_path", "")).strip()
+    resolved_image_path = _resolve_image_path(image_path)
     image_bytes = None
-    if image_path:
+    if resolved_image_path is not None:
         try:
             # Leemos la miniatura local para mostrarla directamente en Streamlit.
-            image_bytes = Path(image_path).read_bytes()
+            image_bytes = resolved_image_path.read_bytes()
         except OSError:
             image_bytes = None
 
@@ -199,7 +236,7 @@ def _build_match_result(meta: dict, similarity: float):
         "period": str(meta.get("period", "Period unavailable")).strip() or "Period unavailable",
         "source_name": str(meta.get("source_name", "Local visual index")).strip() or "Local visual index",
         "source_url": str(meta.get("source_url", "")).strip(),
-        "image_path": image_path,
+        "image_path": str(resolved_image_path or image_path),
         "image_bytes": image_bytes,
         "medium": str(meta.get("medium", "")).strip(),
         "culture": str(meta.get("culture", "")).strip(),

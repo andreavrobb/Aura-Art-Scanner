@@ -28,6 +28,14 @@ ARTISTS_CSV_PATH = BASE_DIR / "met_art_data" / "Artists2.csv"
 ARTIST_IMAGES_DIR = BASE_DIR / "met_art_data" / "resized 3"
 
 
+def portable_image_path(image_path: Path) -> str:
+    """Guarda rutas relativas para que el índice funcione en cualquier deploy."""
+    try:
+        return str(image_path.resolve().relative_to(BASE_DIR))
+    except ValueError:
+        return str(image_path.resolve())
+
+
 def normalize_artist_key(name):
     """Convierte un nombre de artista al patrón usado por los archivos locales."""
     return str(name or "").strip().replace(" ", "_")
@@ -85,7 +93,7 @@ def collect_met_records():
         # Guardamos la información mínima que luego será útil en el buscador.
         records.append(
             {
-                "image_path": str(image_path.resolve()),
+                "image_path": portable_image_path(image_path),
                 "title": str(row.get("title", "Untitled")).strip() or "Untitled",
                 "creator": str(row.get("artistDisplayName", "Unknown artist")).strip() or "Unknown artist",
                 "period": str(row.get("objectDate", "")).strip() or str(row.get("period", "")).strip() or "Period unavailable",
@@ -128,7 +136,7 @@ def collect_artist_preview_records():
         artist_name = str(artist_row.get("name", "")).strip() if artist_row is not None else artist_key.replace("_", " ")
         records.append(
             {
-                "image_path": str(image_path.resolve()),
+                "image_path": portable_image_path(image_path),
                 "title": f"{artist_name} preview",
                 "creator": artist_name or "Unknown artist",
                 "period": str(artist_row.get("years", "")).strip() if artist_row is not None else "Period unavailable",
@@ -150,7 +158,7 @@ def main():
         raise SystemExit("No local image records were found to index.")
 
     # Convertimos cada ruta de imagen a un embedding visual.
-    image_paths = [Path(record["image_path"]) for record in records]
+    image_paths = [BASE_DIR / record["image_path"] if not Path(record["image_path"]).is_absolute() else Path(record["image_path"]) for record in records]
     embeddings = encode_image_paths(image_paths)
     if embeddings is None or len(embeddings) != len(records):
         raise SystemExit("Could not build embeddings. Install torch + open-clip-torch and try again.")
